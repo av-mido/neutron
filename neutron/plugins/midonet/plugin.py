@@ -260,8 +260,10 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             port_db_entry = super(MidonetPluginV2,
                                   self).create_port(context, port)
             # Caveat: port_db_entry is not a db model instance
-            sg_ids = self._get_security_groups_on_port(context, port)
-            self._process_port_create_security_group(context, port, sg_ids)
+            # FIXME(tomoe): the following two line change introduced by somebody
+            #               is broken.  just commented out for now. 
+            # sg_ids = self._get_security_groups_on_port(context, port)
+            # self._process_port_create_security_group(context, port, sg_ids)
             if is_compute_interface:
                 # Create a DHCP entry if needed.
                 if 'ip_address' in (port_db_entry['fixed_ips'] or [{}])[0]:
