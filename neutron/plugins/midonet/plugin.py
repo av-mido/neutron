@@ -71,16 +71,11 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             self.provider_router = self.client.get_router(provider_router_id)
             self.metadata_router = self.client.get_router(metadata_router_id)
 
-        elif not provider_router_id or not metadata_router_id:
-            if mode == 'dev':
-                msg = _('No provider router and metadata device ids found. '
-                        'But skipping because running in dev env.')
-                LOG.debug(msg)
-            else:
-                msg = _('provider_router_id and metadata_router_id '
-                        'should be configured in the plugin config file')
-                LOG.exception(msg)
-                raise MidonetPluginException(msg=msg)
+        else:
+            msg = _('provider_router_id and metadata_router_id '
+                    'should be configured in the plugin config file')
+            LOG.exception(msg)
+            raise MidonetPluginException(msg=msg)
 
         db.configure_db()
 
