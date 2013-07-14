@@ -1,0 +1,559 @@
+Source: quantum
+Section: net
+Priority: optional
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+XSBC-Original-Maintainer: Chuck Short <zulcss@ubuntu.com>
+Build-Depends: debhelper (>= 8.0.0), python-all (>= 2.6)
+Build-Depends-Indep:
+ alembic (>= 0.4.1),
+ pep8,
+ python-amqplib,
+ python-anyjson,
+ python-cliff,
+ python-configobj,
+ python-coverage,
+ python-d2to1,
+ python-eventlet,
+ python-fixtures (>= 0.3.12),
+ python-httplib2,
+ python-iso8601,
+ python-keystone,
+ python-kombu,
+ python-lxml,
+ python-mock (>= 1.0b1),
+ python-mox,
+ python-netaddr,
+ python-netifaces,
+ python-nose,
+ python-novaclient,
+ python-oslo.config,
+ python-pbr,
+ python-paste,
+ python-pastedeploy,
+ python-pyudev,
+ python-quantumclient (>= 1:2.2.0),
+ python-routes,
+ python-setuptools,
+ python-setuptools-git,
+ python-simplejson,
+ python-stevedore (>= 0.8),
+ python-sqlalchemy,
+ python-testtools,
+ python-webob,
+ python-webtest,
+ subunit,
+ testrepository ( >= 0.0.8)
+XS-Python-Version: >= 2.6
+Standards-Version: 3.9.4
+XS-Testsuite: autopkgtest
+
+Package: quantum-server
+Architecture: all
+Depends:
+ adduser,
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Recommends: quantum-plugin-openvswitch
+Description: Quantum is a virtual network service for Openstack - server
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Quantum server
+
+Package: quantum-common
+Architecture: all
+Depends:
+ adduser,
+ python-quantum (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends}
+Breaks: quantum-server ( <= 2013.1~g2-0ubuntu1 )
+Replaces: quantum-server ( <= 2013.1~g2-0ubuntu1 )
+Description: Quantum is a virtual network service for Openstack - common
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the common files.
+
+Package: quantum-plugin-cisco
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - Cisco plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Cisco plugin.
+
+Package: quantum-plugin-nec
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - NEC plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the NEC plugin.
+
+Package: quantum-plugin-nec-agent
+Architecture: all
+Depends:
+ openvswitch-switch,
+ quantum-common (= ${source:Version}),
+ quantum-plugin-nec,
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Breaks: quantum-plugin-nec ( <= 2013.1~g2-0ubuntu1 )
+Replaces: quantum-plugin-nec ( <= 2013.1~g2-0ubuntu1 )
+Description: Quantum is a virtual network service for Openstack - NEC plugin agent
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the NEC plugin agent.
+
+Package: quantum-plugin-bigswitch
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - BigSwitch plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the BigSwitch plugin.
+
+Package: quantum-plugin-hyperv
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - Hyper-V plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Hyper-V plugin.
+
+Package: quantum-plugin-brocade
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - Brocade plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Brocade plugin.
+
+Package: quantum-plugin-plumgrid
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - PLUMgrid plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the PLUMgrid plugin.
+
+Package: quantum-plugin-metaplugin
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - Metaplugin plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Metaplugin plugin.
+
+Package: quantum-plugin-nicira
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - Nicira plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Nicira NVP plugin
+
+Package: quantum-l3-agent
+Architecture: all
+Depends:
+ quantum-common (= ${source:Version}),
+ quantum-metadata-agent (= ${source:Version}),
+ iputils-arping,
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Breaks:
+ quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 ),
+ quantum-server ( <= 2013.1~g2-0ubuntu1 )
+Replaces:
+ quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 ),
+ quantum-server ( <= 2013.1~g2-0ubuntu1 )
+Description: Quantum is a virtual network service for Openstack - l3 agent
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the layer 3 routing agent.
+
+Package: quantum-dhcp-agent
+Architecture: all
+Depends:
+ dnsmasq-base,
+ dnsmasq-utils,
+ quantum-common (= ${source:Version}),
+ quantum-metadata-agent (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Breaks: quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 )
+Replaces: quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 )
+Description: Quantum is a virtual network service for Openstack - DHCP agent
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the DHCP agent.
+
+Package: quantum-metadata-agent
+Architecture: all
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Breaks: quantum-l3-agent (<= 2013.1.g3-0ubuntu1)
+Replaces: quantum-l3-agent (<= 2013.1.g3-0ubuntu1)
+Description: Quantum is a virtual network service for Openstack - metadata agent
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the metadata proxy agent.
+
+Package: quantum-lbaas-agent
+Architecture: all
+Depends:
+ haproxy,
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Breaks: quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 )
+Replaces: quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 )
+Description: Quantum is a virtual network service for Openstack - LBaaS agent
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Load Balancing as-a Service (LBaaS) agent.
+
+Package: python-quantum
+Architecture: all
+Section: python
+Depends:
+ python-amqplib,
+ python-anyjson,
+ python-configobj,
+ python-eventlet,
+ python-gflags,
+ python-httplib2,
+ python-iso8601,
+ python-keystone,
+ python-kombu,
+ python-lxml,
+ python-netaddr,
+ python-paste,
+ python-pastedeploy,
+ python-pyudev,
+ python-quantumclient (>= 1:0.1.0.1-0ubuntu1),
+ python-routes,
+ python-simplejson,
+ python-stevedore (>= 0.8),
+ python-sqlalchemy,
+ python-webob,
+ ${misc:Depends},
+ ${python:Depends}
+Provides: ${python:Provides}
+XB-Python-Version: ${python:Versions}
+Description: Quantum is a virutal network service for Openstack - Python library
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Python library.
+
+Package: quantum-plugin-openvswitch
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - Open vSwitch plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Open vSwitch plugin.
+
+Package: quantum-plugin-openvswitch-agent
+Architecture: all
+Depends:
+ openvswitch-switch,
+ quantum-common (= ${source:Version}),
+ quantum-plugin-openvswitch,
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Breaks: quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 )
+Replaces: quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 )
+Description: Quantum is a virtual network service for Openstack - Open vSwitch plugin agent
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Open vSwitch plugin agent.
+
+Package: quantum-plugin-linuxbridge
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - linuxbridge plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the linuxbridge plugin.
+
+Package: quantum-plugin-linuxbridge-agent
+Architecture: all
+Depends:
+ bridge-utils,
+ quantum-common (= ${source:Version}),
+ quantum-plugin-linuxbridge,
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Breaks: quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 )
+Replaces: quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 )
+Description: Quantum is a virtual network service for Openstack - linuxbridge plugin agent
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the linuxbridge plugin agent.
+
+Package: quantum-plugin-ryu
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - RYU plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the RYU plugin.
+
+Package: quantum-plugin-ryu-agent
+Architecture: all
+Depends:
+ quantum-common (= ${source:Version}),
+ quantum-plugin-ryu,
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Breaks:
+ quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 ),
+ quantum-server ( << 2012.1-0ubuntu3 )
+Replaces:
+ quantum-common ( <= 2012.2~rc1~20120907.1154-0ubuntu1 ),
+ quantum-server ( << 2012.1-0ubuntu3 )
+Description: Quantum is a virtual network service for Openstack - RYU plugin agent
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the RYU plugin agent.
+
+Package: quantum-plugin-midonet
+Architecture: all
+Provides: quantum-plugin
+Depends:
+ quantum-common (= ${source:Version}),
+ ${misc:Depends},
+ ${python:Depends},
+ ${shlibs:Depends}
+Description: Quantum is a virtual network service for Openstack - Midonet plugin
+ Quantum is a virtual network service for Openstack, and a part of
+ Netstack. Just like OpenStack Nova provides an API to dynamically
+ request and configure virtual servers, Quantum provides an API to
+ dynamically request and configure virtual networks. These networks
+ connect "interfaces" from other OpenStack services (e.g., virtual NICs
+ from Nova VMs). The Quantum API supports extensions to provide
+ advanced network capabilities (e.g., QoS, ACLs, network monitoring,
+ etc.)
+ .
+ This package provides the Midonet plugin.

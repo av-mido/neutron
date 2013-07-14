@@ -1,0 +1,2 @@
+bin/quantum-ryu-agent usr/bin
+etc/quantum/rootwrap.d/ryu-plugin.filters etc/quantum/rootwrap.d

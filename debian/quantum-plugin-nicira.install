@@ -1,0 +1,2 @@
+etc/quantum/plugins/nicira/* etc/quantum/plugins/nicira
+bin/quantum-check-nvp-config usr/bin

@@ -1,0 +1,4 @@
+bin/quantum-lbaas-agent usr/bin
+debian/cron.d/quantum-lbaas-agent-netns-cleanup etc/cron.d
+etc/lbaas_agent.ini etc/quantum
+etc/quantum/rootwrap.d/lbaas-haproxy.filters etc/quantum/rootwrap.d

@@ -23,3 +23,7 @@
 
  For help using or hacking on Neutron, you can send mail to
  <mailto:openstack-dev@lists.openstack.org>.
+
+# -- MidoNet Integration Compatibility
+
+ <TODO> Add version compatibility when it becomes known.

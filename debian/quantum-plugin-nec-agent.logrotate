@@ -1,0 +1,7 @@
+/var/log/quantum/nec-agent.log {
+    daily
+    missingok
+    compress
+    delaycompress
+    notifempty
+}

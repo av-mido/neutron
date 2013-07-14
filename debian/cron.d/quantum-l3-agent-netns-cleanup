@@ -1,0 +1,4 @@
+# vim: set filetype=crontab:
+# Periodically cleans Quantum's network namespaces on behalf of the Quantum
+# L3 agent.
+0 * * * * quantum if [ -x /usr/bin/quantum-netns-cleanup ] ; then /usr/bin/quantum-netns-cleanup --config-file=/etc/quantum/quantum.conf --config-file=/etc/quantum/l3_agent.ini >/dev/null 2>&1; fi

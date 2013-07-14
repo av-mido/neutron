@@ -1,0 +1,7 @@
+/var/log/quantum/linuxbridge-agent.log {
+    daily
+    missingok
+    compress
+    delaycompress
+    notifempty
+}

@@ -1,0 +1,13 @@
+bin/quantum-db-manage usr/bin
+bin/quantum-debug usr/bin
+bin/quantum-netns-cleanup usr/bin
+bin/quantum-ovs-cleanup usr/bin
+bin/quantum-rootwrap usr/bin
+bin/quantum-usage-audit usr/bin
+debian/quantum_sudoers etc/sudoers.d
+etc/api-paste.ini etc/quantum
+etc/policy.json etc/quantum
+etc/quantum.conf etc/quantum
+etc/quantum/rootwrap.d/debug.filters etc/quantum/rootwrap.d
+etc/quantum/rootwrap.d/iptables-firewall.filters etc/quantum/rootwrap.d
+etc/rootwrap.conf etc/quantum

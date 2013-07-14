@@ -1,0 +1,2 @@
+bin/quantum-linuxbridge-agent usr/bin
+etc/quantum/rootwrap.d/linuxbridge-plugin.filters etc/quantum/rootwrap.d

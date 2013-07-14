@@ -1,0 +1,7 @@
+/var/log/quantum/dhcp-agent.log {
+    daily
+    missingok
+    compress
+    delaycompress
+    notifempty
+}

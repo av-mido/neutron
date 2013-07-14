@@ -1,0 +1,7 @@
+/var/log/quantum/ryu-agent.log {
+    daily
+    missingok
+    compress
+    delaycompress
+    notifempty
+}

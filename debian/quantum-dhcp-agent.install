@@ -1,0 +1,5 @@
+bin/quantum-dhcp-agent usr/bin
+bin/quantum-dhcp-agent-dnsmasq-lease-update usr/bin
+debian/cron.d/quantum-dhcp-agent-netns-cleanup etc/cron.d
+etc/dhcp_agent.ini etc/quantum
+etc/quantum/rootwrap.d/dhcp.filters etc/quantum/rootwrap.d

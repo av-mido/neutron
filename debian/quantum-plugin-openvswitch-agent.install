@@ -1,0 +1,2 @@
+bin/quantum-openvswitch-agent usr/bin
+etc/quantum/rootwrap.d/openvswitch-plugin.filters etc/quantum/rootwrap.d

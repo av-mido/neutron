@@ -1,0 +1,4 @@
+Tests: quantum-daemons python-quantum
+Depends: quantum-server, quantum-l3-agent, quantum-dhcp-agent, quantum-metadata-agent,
+ quantum-lbaas-agent, python-quantum
+Restrictions: needs-root

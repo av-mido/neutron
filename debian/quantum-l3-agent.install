@@ -1,0 +1,4 @@
+bin/quantum-l3-agent usr/bin
+debian/cron.d/quantum-l3-agent-netns-cleanup etc/cron.d
+etc/l3_agent.ini etc/quantum
+etc/quantum/rootwrap.d/l3.filters etc/quantum/rootwrap.d

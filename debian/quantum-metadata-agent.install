@@ -1,0 +1,3 @@
+bin/quantum-metadata-agent usr/bin
+bin/quantum-ns-metadata-proxy usr/bin
+etc/metadata_agent.ini etc/quantum

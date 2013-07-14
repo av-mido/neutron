@@ -1,0 +1,16 @@
+description "Quantum metadata plugin agent"
+author "Yolanda Robla <yolanda.robla@canonical.com>"
+
+start on runlevel [2345]
+stop on runlevel [016]
+
+chdir /var/run
+
+pre-start script
+	mkdir -p /var/run/quantum
+	chown quantum:root /var/run/quantum
+end script
+
+exec start-stop-daemon --start --chuid quantum --exec /usr/bin/quantum-metadata-agent -- \
+            --config-file=/etc/quantum/quantum.conf --config-file=/etc/quantum/metadata_agent.ini \
+            --log-file=/var/log/quantum/metadata-agent.log
