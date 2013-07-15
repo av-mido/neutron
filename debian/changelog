@@ -1,4 +1,4 @@
-quantum (1:2013.2~b1-0ubuntu2mido0) precise-havana; urgency=low
+quantum (1:2013.2~b1.mido0-0ubuntu2.mido0) precise-havana; urgency=low
 
   * Change version from cloud to mido. 
 
