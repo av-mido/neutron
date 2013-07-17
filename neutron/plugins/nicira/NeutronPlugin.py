@@ -42,11 +42,14 @@ from neutron.db import agentschedulers_db
 from neutron.db import api as db
 from neutron.db import db_base_plugin_v2
 from neutron.db import dhcp_rpc_base
+from neutron.db import extraroute_db
 from neutron.db import l3_db
+from neutron.db import l3_gwmode_db
 from neutron.db import models_v2
 from neutron.db import portsecurity_db
 from neutron.db import quota_db  # noqa
 from neutron.db import securitygroups_db
+from neutron.extensions import extraroute
 from neutron.extensions import l3
 from neutron.extensions import portsecurity as psec
 from neutron.extensions import providernet as pnet
@@ -71,6 +74,7 @@ from neutron.plugins.nicira import nvplib
 
 
 LOG = logging.getLogger("NeutronPlugin")
+
 NVP_NOSNAT_RULES_ORDER = 10
 NVP_FLOATINGIP_NAT_RULES_ORDER = 224
 NVP_EXTGW_NAT_RULES_ORDER = 255
@@ -124,7 +128,8 @@ class NVPRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin):
 
 
 class NvpPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
-                  l3_db.L3_NAT_db_mixin,
+                  extraroute_db.ExtraRoute_db_mixin,
+                  l3_gwmode_db.L3_NAT_db_mixin,
                   portsecurity_db.PortSecurityDbMixin,
                   securitygroups_db.SecurityGroupDbMixin,
                   mac_db.MacLearningDbMixin,
@@ -139,7 +144,9 @@ class NvpPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
     functionality using NVP.
     """
 
-    supported_extension_aliases = ["mac-learning",
+    supported_extension_aliases = ["ext_gw_mode",
+                                   "extraroute",
+                                   "mac-learning",
                                    "network-gateway",
                                    "nvp-qos",
                                    "port-security",
@@ -274,6 +281,58 @@ class NvpPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                                             attachment_type, attachment,
                                             attachment_vlan)
         return lrouter_port
+
+    def _update_router_gw_info(self, context, router_id, info):
+        # NOTE(salvatore-orlando): We need to worry about rollback of NVP
+        # configuration in case of failures in the process
+        # Ref. LP bug 1102301
+        router = self._get_router(context, router_id)
+        # Check whether SNAT rule update should be triggered
+        # NVP also supports multiple external networks so there is also
+        # the possibility that NAT rules should be replaced
+        current_ext_net_id = router.gw_port_id and router.gw_port.network_id
+        new_ext_net_id = info and info.get('network_id')
+        # SNAT should be enabled unless info['enable_snat'] is
+        # explicitly set to false
+        enable_snat = new_ext_net_id and info.get('enable_snat', True)
+        # Remove if ext net removed, changed, or if snat disabled
+        remove_snat_rules = (current_ext_net_id and
+                             new_ext_net_id != current_ext_net_id or
+                             router.enable_snat and not enable_snat)
+        # Add rules if snat is enabled, and if either the external network
+        # changed or snat was previously disabled
+        # NOTE: enable_snat == True implies new_ext_net_id != None
+        add_snat_rules = (enable_snat and
+                          (new_ext_net_id != current_ext_net_id or
+                           not router.enable_snat))
+        router = super(NvpPluginV2, self)._update_router_gw_info(
+            context, router_id, info, router=router)
+        # Add/Remove SNAT rules as needed
+        # Create an elevated context for dealing with metadata access
+        # cidrs which are created within admin context
+        ctx_elevated = context.elevated()
+        if remove_snat_rules or add_snat_rules:
+            cidrs = self._find_router_subnets_cidrs(ctx_elevated, router_id)
+        if remove_snat_rules:
+            # Be safe and concede NAT rules might not exist.
+            # Therefore use min_num_expected=0
+            for cidr in cidrs:
+                nvplib.delete_nat_rules_by_match(
+                    self.cluster, router_id, "SourceNatRule",
+                    max_num_expected=1, min_num_expected=0,
+                    source_ip_addresses=cidr)
+        if add_snat_rules:
+            ip_addresses = self._build_ip_address_list(
+                ctx_elevated, router.gw_port['fixed_ips'])
+            # Set the SNAT rule for each subnet (only first IP)
+            for cidr in cidrs:
+                cidr_prefix = int(cidr.split('/')[1])
+                nvplib.create_lrouter_snat_rule(
+                    self.cluster, router_id,
+                    ip_addresses[0].split('/')[0],
+                    ip_addresses[0].split('/')[0],
+                    order=NVP_EXTGW_NAT_RULES_ORDER - cidr_prefix,
+                    match_criteria={'source_ip_addresses': cidr})
 
     def _update_router_port_attachment(self, cluster, context,
                                        router_id, port_data,
@@ -523,15 +582,6 @@ class NvpPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 "L3GatewayAttachment",
                 ext_network[pnet.PHYSICAL_NETWORK],
                 ext_network[pnet.SEGMENTATION_ID])
-        # Set the SNAT rule for each subnet (only first IP)
-        for cidr in self._find_router_subnets_cidrs(context, router_id):
-            cidr_prefix = int(cidr.split('/')[1])
-            nvplib.create_lrouter_snat_rule(
-                self.cluster, router_id,
-                ip_addresses[0].split('/')[0],
-                ip_addresses[0].split('/')[0],
-                order=NVP_EXTGW_NAT_RULES_ORDER - cidr_prefix,
-                match_criteria={'source_ip_addresses': cidr})
 
         LOG.debug(_("_nvp_create_ext_gw_port completed on external network "
                     "%(ext_net_id)s, attached to router:%(router_id)s. "
@@ -556,13 +606,6 @@ class NvpPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                                        port_data['name'],
                                        True,
                                        ['0.0.0.0/31'])
-            # Delete the SNAT rule for each subnet, keep in mind
-            # that the rule might have already been removed from NVP
-            for cidr in self._find_router_subnets_cidrs(context, router_id):
-                nvplib.delete_nat_rules_by_match(
-                    self.cluster, router_id, "SourceNatRule",
-                    max_num_expected=1, min_num_expected=0,
-                    source_ip_addresses=cidr)
             # Reset attachment
             self._update_router_port_attachment(
                 self.cluster, context, router_id, port_data,
@@ -1458,7 +1501,7 @@ class NvpPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 self._update_router_gw_info(context, router_db['id'], gw_info)
         return self._make_router_dict(router_db)
 
-    def update_router(self, context, id, router):
+    def update_router(self, context, router_id, router):
         # Either nexthop is updated or should be kept as it was before
         r = router['router']
         nexthop = None
@@ -1479,22 +1522,45 @@ class NvpPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                     ext_subnet = ext_net.subnets[0]
                     nexthop = ext_subnet.gateway_ip
         try:
-            nvplib.update_lrouter(self.cluster, id,
-                                  router['router'].get('name'), nexthop)
+            for route in r.get('routes', []):
+                if route['destination'] == '0.0.0.0/0':
+                    msg = _("'routes' cannot contain route '0.0.0.0/0', "
+                            "this must be updated through the default "
+                            "gateway attribute")
+                    raise q_exc.BadRequest(resource='router', msg=msg)
+            previous_routes = nvplib.update_lrouter(
+                self.cluster, router_id, r.get('name'),
+                nexthop, routes=r.get('routes'))
         # NOTE(salv-orlando): The exception handling below is not correct, but
         # unfortunately nvplib raises a neutron notfound exception when an
         # object is not found in the underlying backend
         except q_exc.NotFound:
             # Put the router in ERROR status
             with context.session.begin(subtransactions=True):
-                router_db = self._get_router(context, id)
+                router_db = self._get_router(context, router_id)
                 router_db['status'] = constants.NET_STATUS_ERROR
             raise nvp_exc.NvpPluginException(
-                err_msg=_("Logical router %s not found on NVP Platform") % id)
+                err_msg=_("Logical router %s not found "
+                          "on NVP Platform") % router_id)
         except NvpApiClient.NvpApiException:
             raise nvp_exc.NvpPluginException(
                 err_msg=_("Unable to update logical router on NVP Platform"))
-        return super(NvpPluginV2, self).update_router(context, id, router)
+        except nvp_exc.NvpInvalidVersion:
+            msg = _("Request cannot contain 'routes' with the NVP "
+                    "platform currently in execution. Please, try "
+                    "without specifying the static routes.")
+            LOG.exception(msg)
+            raise q_exc.BadRequest(resource='router', msg=msg)
+        try:
+            return super(NvpPluginV2, self).update_router(context,
+                                                          router_id, router)
+        except (extraroute.InvalidRoutes,
+                extraroute.RouterInterfaceInUseByRoute,
+                extraroute.RoutesExhausted):
+            with excutils.save_and_reraise_exception():
+                # revert changes made to NVP
+                nvplib.update_explicit_routes_lrouter(
+                    self.cluster, router_id, previous_routes)
 
     def delete_router(self, context, id):
         with context.session.begin(subtransactions=True):
@@ -1628,7 +1694,7 @@ class NvpPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         # Fetch router from DB
         router = self._get_router(context, router_id)
         gw_port = router.gw_port
-        if gw_port:
+        if gw_port and router.enable_snat:
             # There is a change gw_port might have multiple IPs
             # In that case we will consider only the first one
             if gw_port.get('fixed_ips'):
@@ -1843,7 +1909,7 @@ class NvpPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                         match_criteria={'destination_ip_addresses':
                                         floating_ip})
                     # setup snat rule such that src ip of a IP packet when
-                    #  using floating is the floating ip itself.
+                    # using floating is the floating ip itself.
                     nvplib.create_lrouter_snat_rule(
                         self.cluster, router_id, floating_ip, floating_ip,
                         order=NVP_FLOATINGIP_NAT_RULES_ORDER,

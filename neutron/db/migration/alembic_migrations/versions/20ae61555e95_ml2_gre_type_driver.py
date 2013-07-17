@@ -15,33 +15,26 @@
 #    under the License.
 #
 
-"""ext_gw_mode
+"""DB Migration for ML2 GRE Type Driver
 
-Revision ID: 128e042a2b68
-Revises: 32b517556ec9
-Create Date: 2013-03-27 00:35:17.323280
+Revision ID: 20ae61555e95
+Revises: 13de305df56e
+Create Date: 2013-07-10 17:19:03.021937
 
 """
 
 # revision identifiers, used by Alembic.
-revision = '128e042a2b68'
-down_revision = '32b517556ec9'
+revision = '20ae61555e95'
+down_revision = '13de305df56e'
 
 # Change to ['*'] if this migration applies to all plugins
 
 migration_for_plugins = [
-    'neutron.plugins.hyperv.hyperv_neutron_plugin.HyperVNeutronPlugin',
-    'neutron.plugins.linuxbridge.lb_neutron_plugin.LinuxBridgePluginV2',
-    'neutron.plugins.metaplugin.meta_neutron_plugin.MetaPluginV2',
-    'neutron.plugins.nec.nec_plugin.NECPluginV2',
-    'neutron.plugins.nicira.NeutronPlugin.NvpPluginV2',
-    'neutron.plugins.openvswitch.ovs_neutron_plugin.OVSNeutronPluginV2',
-    'neutron.plugins.ryu.ryu_neutron_plugin.RyuNeutronPluginV2'
+    'neutron.plugins.ml2.plugin.Ml2Plugin'
 ]
 
 from alembic import op
 import sqlalchemy as sa
-
 
 from neutron.db import migration
 
@@ -50,14 +43,24 @@ def upgrade(active_plugin=None, options=None):
     if not migration.should_run(active_plugin, migration_for_plugins):
         return
 
-    op.add_column('routers', sa.Column('enable_snat', sa.Boolean(),
-                                       nullable=False, default=True))
-    # Set enable_snat to True for existing routers
-    op.execute("UPDATE routers SET enable_snat=True")
+    op.create_table(
+        'ml2_gre_allocations',
+        sa.Column('gre_id', sa.Integer, nullable=False,
+                  autoincrement=False),
+        sa.Column('allocated', sa.Boolean, nullable=False),
+        sa.PrimaryKeyConstraint('gre_id')
+    )
+
+    op.create_table(
+        'ml2_gre_endpoints',
+        sa.Column('ip_address', sa.String(length=64)),
+        sa.PrimaryKeyConstraint('ip_address')
+    )
 
 
 def downgrade(active_plugin=None, options=None):
     if not migration.should_run(active_plugin, migration_for_plugins):
         return
 
-    op.drop_column('routers', 'enable_snat')
+    op.drop_table('ml2_gre_allocations')
+    op.drop_table('ml2_gre_endpoints')

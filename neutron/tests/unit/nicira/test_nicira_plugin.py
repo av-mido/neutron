@@ -34,10 +34,12 @@ from neutron.plugins.nicira.extensions import nvp_networkgw
 from neutron.plugins.nicira.extensions import nvp_qos as ext_qos
 from neutron.plugins.nicira import NeutronPlugin
 from neutron.plugins.nicira import NvpApiClient
+from neutron.plugins.nicira.NvpApiClient import NVPVersion
 from neutron.plugins.nicira import nvplib
 from neutron.tests.unit.nicira import fake_nvpapiclient
 import neutron.tests.unit.nicira.test_networkgw as test_l2_gw
 import neutron.tests.unit.test_db_plugin as test_plugin
+import neutron.tests.unit.test_extension_ext_gw_mode as test_ext_gw_mode
 import neutron.tests.unit.test_extension_portsecurity as psec
 import neutron.tests.unit.test_extension_security_group as ext_sg
 from neutron.tests.unit import test_extensions
@@ -86,7 +88,7 @@ class NiciraPluginV2TestCase(test_plugin.NeutronDbPluginV2TestCase):
             return self.fc.fake_request(*args, **kwargs)
 
         # Emulate tests against NVP 2.x
-        instance.return_value.get_nvp_version.return_value = "2.999"
+        instance.return_value.get_nvp_version.return_value = NVPVersion("2.9")
         instance.return_value.request.side_effect = _fake_request
         super(NiciraPluginV2TestCase, self).setUp(self._plugin_name)
         cfg.CONF.set_override('metadata_mode', None, 'NVP')
@@ -827,6 +829,11 @@ class TestNiciraQoSQueue(NiciraPluginV2TestCase):
             res = req.get_response(self.ext_api)
             queue = self.deserialize('json', res)
             self.assertEqual(queue['qos_queue']['max'], 20)
+
+
+class NiciraExtGwModeTestCase(test_ext_gw_mode.ExtGwModeTestCase,
+                              NiciraPluginV2TestCase):
+    pass
 
 
 class NiciraNeutronNVPOutOfSync(test_l3_plugin.L3NatTestCaseBase,

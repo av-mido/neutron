@@ -15,28 +15,22 @@
 #    under the License.
 #
 
-"""ext_gw_mode
+"""DB Migration for ML2 VXLAN Type Driver
 
-Revision ID: 128e042a2b68
-Revises: 32b517556ec9
-Create Date: 2013-03-27 00:35:17.323280
+Revision ID: 477a4488d3f4
+Revises: 20ae61555e95
+Create Date: 2013-07-09 14:14:33.158502
 
 """
 
 # revision identifiers, used by Alembic.
-revision = '128e042a2b68'
-down_revision = '32b517556ec9'
+revision = '477a4488d3f4'
+down_revision = '20ae61555e95'
 
 # Change to ['*'] if this migration applies to all plugins
 
 migration_for_plugins = [
-    'neutron.plugins.hyperv.hyperv_neutron_plugin.HyperVNeutronPlugin',
-    'neutron.plugins.linuxbridge.lb_neutron_plugin.LinuxBridgePluginV2',
-    'neutron.plugins.metaplugin.meta_neutron_plugin.MetaPluginV2',
-    'neutron.plugins.nec.nec_plugin.NECPluginV2',
-    'neutron.plugins.nicira.NeutronPlugin.NvpPluginV2',
-    'neutron.plugins.openvswitch.ovs_neutron_plugin.OVSNeutronPluginV2',
-    'neutron.plugins.ryu.ryu_neutron_plugin.RyuNeutronPluginV2'
+    'neutron.plugins.ml2.plugin.Ml2Plugin'
 ]
 
 from alembic import op
@@ -50,14 +44,26 @@ def upgrade(active_plugin=None, options=None):
     if not migration.should_run(active_plugin, migration_for_plugins):
         return
 
-    op.add_column('routers', sa.Column('enable_snat', sa.Boolean(),
-                                       nullable=False, default=True))
-    # Set enable_snat to True for existing routers
-    op.execute("UPDATE routers SET enable_snat=True")
+    op.create_table(
+        'ml2_vxlan_allocations',
+        sa.Column('vxlan_vni', sa.Integer, nullable=False,
+                  autoincrement=False),
+        sa.Column('allocated', sa.Boolean, nullable=False),
+        sa.PrimaryKeyConstraint('vxlan_vni')
+    )
+
+    op.create_table(
+        'ml2_vxlan_endpoints',
+        sa.Column('ip_address', sa.String(length=64)),
+        sa.Column('udp_port', sa.Integer(), nullable=False),
+        sa.PrimaryKeyConstraint('ip_address'),
+        sa.PrimaryKeyConstraint('udp_port')
+    )
 
 
 def downgrade(active_plugin=None, options=None):
     if not migration.should_run(active_plugin, migration_for_plugins):
         return
 
-    op.drop_column('routers', 'enable_snat')
+    op.drop_table('ml2_vxlan_allocations')
+    op.drop_table('ml2_vxlan_endpoint')

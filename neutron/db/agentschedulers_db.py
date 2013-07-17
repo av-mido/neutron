@@ -123,15 +123,14 @@ class L3AgentSchedulerDbMixin(l3agentscheduler.L3AgentSchedulerPluginBase,
 
             result = self.auto_schedule_routers(context,
                                                 agent_db.host,
-                                                router_id)
+                                                [router_id])
             if not result:
                 raise l3agentscheduler.RouterSchedulingFailed(
                     router_id=router_id, agent_id=id)
 
         if self.l3_agent_notifier:
-            routers = self.get_sync_data(context, [router_id])
             self.l3_agent_notifier.router_added_to_agent(
-                context, routers, agent_db.host)
+                context, [router_id], agent_db.host)
 
     def remove_router_from_l3_agent(self, context, id, router_id):
         """Remove the router from l3 agent.
@@ -167,7 +166,7 @@ class L3AgentSchedulerDbMixin(l3agentscheduler.L3AgentSchedulerPluginBase,
             return {'routers': []}
 
     def list_active_sync_routers_on_active_l3_agent(
-            self, context, host, router_id):
+            self, context, host, router_ids):
         agent = self._get_agent_by_type_and_host(
             context, constants.AGENT_TYPE_L3, host)
         if not agent.admin_state_up:
@@ -175,9 +174,12 @@ class L3AgentSchedulerDbMixin(l3agentscheduler.L3AgentSchedulerPluginBase,
         query = context.session.query(RouterL3AgentBinding.router_id)
         query = query.filter(
             RouterL3AgentBinding.l3_agent_id == agent.id)
-        if router_id:
-            query = query.filter(RouterL3AgentBinding.router_id == router_id)
 
+        if not router_ids:
+            pass
+        else:
+            query = query.filter(
+                RouterL3AgentBinding.router_id.in_(router_ids))
         router_ids = [item[0] for item in query]
         if router_ids:
             return self.get_sync_data(context, router_ids=router_ids,
@@ -273,10 +275,10 @@ class L3AgentSchedulerDbMixin(l3agentscheduler.L3AgentSchedulerPluginBase,
             candidates.append(l3_agent)
         return candidates
 
-    def auto_schedule_routers(self, context, host, router_id):
+    def auto_schedule_routers(self, context, host, router_ids):
         if self.router_scheduler:
             return self.router_scheduler.auto_schedule_routers(
-                self, context, host, router_id)
+                self, context, host, router_ids)
 
     def schedule_router(self, context, router):
         if self.router_scheduler:
