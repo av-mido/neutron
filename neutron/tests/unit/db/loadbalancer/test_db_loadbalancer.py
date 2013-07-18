@@ -931,7 +931,7 @@ class TestLoadBalancer(LoadBalancerPluginDbTestCase):
         with self.pool() as pool:
             pool_id = pool['pool']['id']
             ctx = context.get_admin_context()
-            self.plugin._update_pool_stats(ctx, pool_id)
+            self.plugin.update_pool_stats(ctx, pool_id)
             pool_obj = ctx.session.query(ldb.Pool).filter_by(id=pool_id).one()
             for key in keys:
                 self.assertEqual(pool_obj.stats.__dict__[key], 0)
@@ -948,7 +948,7 @@ class TestLoadBalancer(LoadBalancerPluginDbTestCase):
         with self.pool() as pool:
             pool_id = pool['pool']['id']
             ctx = context.get_admin_context()
-            self.assertRaises(ValueError, self.plugin._update_pool_stats,
+            self.assertRaises(ValueError, self.plugin.update_pool_stats,
                               ctx, pool_id, {k: v})
 
     def test_update_pool_stats(self):
@@ -959,7 +959,7 @@ class TestLoadBalancer(LoadBalancerPluginDbTestCase):
         with self.pool() as pool:
             pool_id = pool['pool']['id']
             ctx = context.get_admin_context()
-            self.plugin._update_pool_stats(ctx, pool_id, stats_data)
+            self.plugin.update_pool_stats(ctx, pool_id, stats_data)
             pool_obj = ctx.session.query(ldb.Pool).filter_by(id=pool_id).one()
             for k, v in stats_data.items():
                 self.assertEqual(pool_obj.stats.__dict__[k], v)
@@ -1178,6 +1178,26 @@ class TestLoadBalancer(LoadBalancerPluginDbTestCase):
                               healthmon,
                               "123-456-789"
                               )
+
+    def test_update_status(self):
+        with self.pool() as pool:
+            self.assertEqual(pool['pool']['status'], 'PENDING_CREATE')
+            self.assertFalse(pool['pool']['status_description'])
+
+            self.plugin.update_status(context.get_admin_context(), ldb.Pool,
+                                      pool['pool']['id'], 'ERROR', 'unknown')
+            updated_pool = self.plugin.get_pool(context.get_admin_context(),
+                                                pool['pool']['id'])
+            self.assertEqual(updated_pool['status'], 'ERROR')
+            self.assertEqual(updated_pool['status_description'], 'unknown')
+
+            # update status to ACTIVE, status_description should be cleared
+            self.plugin.update_status(context.get_admin_context(), ldb.Pool,
+                                      pool['pool']['id'], 'ACTIVE')
+            updated_pool = self.plugin.get_pool(context.get_admin_context(),
+                                                pool['pool']['id'])
+            self.assertEqual(updated_pool['status'], 'ACTIVE')
+            self.assertFalse(pool['pool']['status_description'])
 
 
 class TestLoadBalancerXML(TestLoadBalancer):

@@ -179,8 +179,7 @@ class LoadBalancerCallbacks(object):
             LOG.debug(msg, port_id)
 
     def update_pool_stats(self, context, pool_id=None, stats=None, host=None):
-        # TODO(markmcclain): add stats collection
-        pass
+        self.plugin.update_pool_stats(context, pool_id, data=stats)
 
 
 class LoadBalancerAgentApi(proxy.RpcProxy):
@@ -274,10 +273,6 @@ class HaproxyOnHostPluginDriver(abstract_driver.LoadBalancerAbstractDriver):
     def update_health_monitor(self, context, old_health_monitor,
                               health_monitor, pool_id):
         # monitors are unused here because agent will fetch what is necessary
-        self.agent_rpc.modify_pool(context, pool_id)
-
-    def delete_health_monitor(self, context, healthmon_id, pool_id):
-        # healthmon_id is not used in this driver
         self.agent_rpc.modify_pool(context, pool_id)
 
     def create_pool_health_monitor(self, context, healthmon, pool_id):
