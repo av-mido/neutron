@@ -74,6 +74,7 @@ class TunnelTest(base.BaseTestCase):
         self.INT_OFPORT = 11111
         self.TUN_OFPORT = 22222
         self.MAP_TUN_OFPORT = 33333
+        self.VETH_MTU = None
         self.inta = self.mox.CreateMock(ip_lib.IPDevice)
         self.intb = self.mox.CreateMock(ip_lib.IPDevice)
         self.inta.link = self.mox.CreateMock(ip_lib.IpLinkCommand)
@@ -87,6 +88,7 @@ class TunnelTest(base.BaseTestCase):
 
         self.mock_map_tun_bridge = ovs_lib.OVSBridge(
             self.MAP_TUN_BRIDGE, 'sudo')
+        self.mock_map_tun_bridge.br_name = self.MAP_TUN_BRIDGE
         self.mock_map_tun_bridge.remove_all_flows()
         self.mock_map_tun_bridge.add_flow(priority=1, actions='normal')
         self.mock_int_bridge.delete_port('int-tunnel_bridge_mapping')
@@ -123,13 +125,18 @@ class TunnelTest(base.BaseTestCase):
             'phy-tunnel_bridge_mapping').AndReturn([self.inta, self.intb])
 
         self.mock_int_bridge.get_local_port_mac().AndReturn('000000000001')
+        self.mox.StubOutWithMock(ovs_lib, 'get_bridges')
+        ovs_lib.get_bridges('sudo').AndReturn([self.INT_BRIDGE,
+                                               self.TUN_BRIDGE,
+                                               self.MAP_TUN_BRIDGE])
 
     def testConstruct(self):
         self.mox.ReplayAll()
         ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                           self.TUN_BRIDGE,
                                           '10.0.0.1', self.NET_MAPPING,
-                                          'sudo', 2, ['gre'])
+                                          'sudo', 2, ['gre'],
+                                          self.VETH_MTU)
         self.mox.VerifyAll()
 
     def testConstructVXLAN(self):
@@ -141,7 +148,8 @@ class TunnelTest(base.BaseTestCase):
         ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                           self.TUN_BRIDGE,
                                           '10.0.0.1', self.NET_MAPPING,
-                                          'sudo', 2, ['vxlan'])
+                                          'sudo', 2, ['vxlan'],
+                                          self.VETH_MTU)
         self.mox.VerifyAll()
 
     def testProvisionLocalVlan(self):
@@ -158,7 +166,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.available_local_vlans = set([LV_ID])
         a.provision_local_vlan(NET_UUID, constants.TYPE_GRE, None, LS_ID)
         self.mox.VerifyAll()
@@ -178,7 +187,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.available_local_vlans = set([LV_ID])
         a.phys_brs['net1'] = self.mock_map_tun_bridge
         a.phys_ofports['net1'] = self.MAP_TUN_OFPORT
@@ -191,7 +201,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.provision_local_vlan(NET_UUID, constants.TYPE_FLAT, 'net2', LS_ID)
         self.mox.VerifyAll()
 
@@ -209,7 +220,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.available_local_vlans = set([LV_ID])
         a.phys_brs['net1'] = self.mock_map_tun_bridge
         a.phys_ofports['net1'] = self.MAP_TUN_OFPORT
@@ -222,7 +234,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.provision_local_vlan(NET_UUID, constants.TYPE_VLAN, 'net2', LS_ID)
         self.mox.VerifyAll()
 
@@ -235,7 +248,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.available_local_vlans = set()
         a.local_vlan_map[NET_UUID] = LVM
         a.reclaim_local_vlan(NET_UUID, LVM)
@@ -253,7 +267,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.phys_brs['net1'] = self.mock_map_tun_bridge
         a.phys_ofports['net1'] = self.MAP_TUN_OFPORT
         a.int_ofports['net1'] = self.INT_OFPORT
@@ -275,7 +290,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.phys_brs['net1'] = self.mock_map_tun_bridge
         a.phys_ofports['net1'] = self.MAP_TUN_OFPORT
         a.int_ofports['net1'] = self.INT_OFPORT
@@ -300,7 +316,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.local_vlan_map[NET_UUID] = LVM
         a.port_bound(VIF_PORT, NET_UUID, 'gre', None, LS_ID)
         self.mox.VerifyAll()
@@ -320,7 +337,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.local_vlan_map[NET_UUID] = LVM
         a.port_bound(VIF_PORT, NET_UUID, 'gre', None, LS_ID)
         a.available_local_vlans = set([LV_ID])
@@ -339,19 +357,22 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.available_local_vlans = set([LV_ID])
         a.local_vlan_map[NET_UUID] = LVM
         a.port_dead(VIF_PORT)
         self.mox.VerifyAll()
 
     def testTunnelUpdate(self):
-        self.mock_tun_bridge.add_tunnel_port('gre-1', '10.0.10.1', 'gre', 4789)
+        self.mock_tun_bridge.add_tunnel_port('gre-1', '10.0.10.1', '10.0.0.1',
+                                             'gre', 4789)
         self.mox.ReplayAll()
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.tunnel_update(
             mox.MockAnything, tunnel_id='1', tunnel_ip='10.0.10.1',
             tunnel_type=constants.TYPE_GRE)
@@ -362,7 +383,8 @@ class TunnelTest(base.BaseTestCase):
         a = ovs_neutron_agent.OVSNeutronAgent(self.INT_BRIDGE,
                                               self.TUN_BRIDGE,
                                               '10.0.0.1', self.NET_MAPPING,
-                                              'sudo', 2, ['gre'])
+                                              'sudo', 2, ['gre'],
+                                              self.VETH_MTU)
         a.tunnel_update(
             mox.MockAnything, tunnel_id='1', tunnel_ip='10.0.0.1')
         self.mox.VerifyAll()
@@ -402,7 +424,8 @@ class TunnelTest(base.BaseTestCase):
                                                     self.TUN_BRIDGE,
                                                     '10.0.0.1',
                                                     self.NET_MAPPING,
-                                                    'sudo', 2, ['gre'])
+                                                    'sudo', 2, ['gre'],
+                                                    self.VETH_MTU)
 
         # Hack to test loop
         # We start method and expect it will raise after 2nd loop
@@ -413,3 +436,12 @@ class TunnelTest(base.BaseTestCase):
             pass
 
         self.mox.VerifyAll()
+
+
+class TunnelTestWithMTU(TunnelTest):
+
+    def setUp(self):
+        super(TunnelTestWithMTU, self).setUp()
+        self.VETH_MTU = 1500
+        self.inta.link.set_mtu(self.VETH_MTU)
+        self.intb.link.set_mtu(self.VETH_MTU)

@@ -58,18 +58,12 @@
     "create_router:external_gateway_info:enable_snat": "rule:admin_only",
     "update_router:external_gateway_info:enable_snat": "rule:admin_only",
 
-    "create_service_type": "rule:admin_only",
-    "update_service_type": "rule:admin_only",
-    "delete_service_type": "rule:admin_only",
-    "get_service_type": "rule:regular_user",
-
     "create_qos_queue": "rule:admin_only",
     "get_qos_queue": "rule:admin_only",
 
     "update_agent": "rule:admin_only",
     "delete_agent": "rule:admin_only",
     "get_agent": "rule:admin_only",
-    "get_agents": "rule:admin_only",
 
     "create_dhcp-network": "rule:admin_only",
     "delete_dhcp-network": "rule:admin_only",
@@ -79,6 +73,8 @@
     "get_l3-routers": "rule:admin_only",
     "get_dhcp-agents": "rule:admin_only",
     "get_l3-agents": "rule:admin_only",
+    "get_loadbalancer-agent": "rule:admin_only",
+    "get_loadbalancer-pools": "rule:admin_only",
 
     "create_router": "rule:regular_user",
     "get_router": "rule:admin_or_owner",

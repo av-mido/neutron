@@ -57,6 +57,7 @@ DNS_PORT = 53
 DHCPV4_PORT = 67
 DHCPV6_PORT = 547
 METADATA_DEFAULT_IP = '169.254.169.254'
+WIN2k3_STATIC_DNS = 249
 
 
 class DhcpBase(object):
@@ -343,8 +344,8 @@ class Dnsmasq(DhcpLocalProcess):
 
         for port in self.network.ports:
             for alloc in port.fixed_ips:
-                name = '%s.%s' % (r.sub('-', alloc.ip_address),
-                                  self.conf.dhcp_domain)
+                name = 'host-%s.%s' % (r.sub('-', alloc.ip_address),
+                                       self.conf.dhcp_domain)
                 buf.write('%s,%s,%s\n' %
                           (port.mac_address, name, alloc.ip_address))
 
@@ -391,6 +392,9 @@ class Dnsmasq(DhcpLocalProcess):
                 options.append(
                     self._format_option(i, 'classless-static-route',
                                         ','.join(host_routes)))
+                options.append(
+                    self._format_option(i, WIN2k3_STATIC_DNS,
+                                        ','.join(host_routes)))
 
             if subnet.ip_version == 4:
                 if gateway:
@@ -428,13 +432,17 @@ class Dnsmasq(DhcpLocalProcess):
         return os.path.join(os.path.dirname(sys.argv[0]),
                             'neutron-dhcp-agent-dnsmasq-lease-update')
 
-    def _format_option(self, index, option_name, *args):
+    def _format_option(self, index, option, *args):
+        """Format DHCP option by option name or code."""
         if self.version >= self.MINIMUM_VERSION:
             set_tag = 'tag:'
         else:
             set_tag = ''
+        option = str(option)
+        if not option.isdigit():
+            option = 'option:%s' % option
         return ','.join((set_tag + self._TAG_PREFIX % index,
-                         'option:%s' % option_name) + args)
+                         option) + args)
 
     @classmethod
     def lease_update(cls):

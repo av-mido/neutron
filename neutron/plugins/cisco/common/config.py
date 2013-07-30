@@ -32,28 +32,22 @@ cisco_plugins_opts = [
 
 
 cisco_opts = [
-    cfg.StrOpt('vlan_start', default='100',
-               help=_("VLAN start value")),
-    cfg.StrOpt('vlan_end', default='3000',
-               help=_("VLAN end value")),
     cfg.StrOpt('vlan_name_prefix', default='q-',
                help=_("VLAN Name prefix")),
-    cfg.StrOpt('max_ports', default='100',
-               help=_("Maximum Port value")),
-    cfg.StrOpt('max_port_profiles', default='65568',
-               help=_("Maximum Port Profile value")),
-    cfg.StrOpt('max_networks', default='65568',
-               help=_("Maximum Network value")),
+    cfg.StrOpt('provider_vlan_name_prefix', default='p-',
+               help=_("VLAN Name prefix for provider vlans")),
+    cfg.BoolOpt('provider_vlan_auto_create', default=True,
+                help='Provider VLANs are automatically created as needed '
+                'on the Nexus switch'),
+    cfg.BoolOpt('provider_vlan_auto_trunk', default=True,
+                help='Provider VLANs are automatically trunked as needed '
+                'on the ports of the Nexus switch'),
     cfg.BoolOpt('svi_round_robin', default=False,
                 help=_("Distribute SVI interfaces over all switches")),
     cfg.StrOpt('model_class',
                default='neutron.plugins.cisco.models.virt_phy_sw_v2.'
                        'VirtualPhysicalSwitchModelV2',
                help=_("Model Class")),
-    cfg.StrOpt('manager_class',
-               default='neutron.plugins.cisco.segmentation.'
-                       'l2network_vlan_mgr_v2.L2NetworkVLANMgr',
-               help=_("Manager Class")),
     cfg.StrOpt('nexus_driver',
                default='neutron.plugins.cisco.test.nexus.'
                        'fake_nexus_driver.CiscoNEXUSFakeDriver',
