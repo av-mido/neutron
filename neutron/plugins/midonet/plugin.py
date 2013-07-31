@@ -58,7 +58,6 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         admin_pass = midonet_conf.password
         admin_project_id = midonet_conf.project_id
         provider_router_id = midonet_conf.provider_router_id
-        metadata_router_id = midonet_conf.metadata_router_id
         mode = midonet_conf.mode
 
         self.mido_api = api.MidonetApi(midonet_uri, admin_user,
@@ -66,14 +65,11 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                                        project_id=admin_project_id)
         self.client = midonet_lib.MidoClient(self.mido_api)
 
-        if provider_router_id and metadata_router_id:
-            # get MidoNet provider router and metadata router
+        if provider_router_id:
             self.provider_router = self.client.get_router(provider_router_id)
-            self.metadata_router = self.client.get_router(metadata_router_id)
-
         else:
-            msg = _('provider_router_id and metadata_router_id '
-                    'should be configured in the plugin config file')
+            msg = _('provider_router_id should be configured in the plugin '
+                    'config file')
             LOG.exception(msg)
             raise MidonetPluginException(msg=msg)
 
