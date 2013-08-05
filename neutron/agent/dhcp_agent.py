@@ -156,7 +156,12 @@ class DhcpAgent(manager.Manager):
             active_networks = self.plugin_rpc.get_active_networks_info()
             active_network_ids = set(network.id for network in active_networks)
             for deleted_id in known_network_ids - active_network_ids:
-                self.disable_dhcp_helper(deleted_id)
+                try:
+                    self.disable_dhcp_helper(deleted_id)
+                except Exception:
+                    self.needs_resync = True
+                    LOG.exception(_('Unable to sync network state on deleted '
+                                    'network %s') % deleted_id)
 
             for network in active_networks:
                 pool.spawn_n(self.configure_dhcp_for_network, network)
@@ -386,7 +391,7 @@ class DhcpPluginApi(proxy.RpcProxy):
                                    topic=self.topic))
 
     def get_dhcp_port(self, network_id, device_id):
-        """Make a remote process call to create the dhcp port."""
+        """Make a remote process call to get the dhcp port."""
         return DictModel(self.call(self.context,
                                    self.make_msg('get_dhcp_port',
                                    network_id=network_id,
@@ -706,26 +711,14 @@ class DeviceManager(object):
                                      self.root_helper)
             device.route.pullup_route(interface_name)
 
-        if self.conf.enable_metadata_network:
-            meta_cidr = netaddr.IPNetwork(METADATA_DEFAULT_IP)
-            metadata_subnets = [s for s in network.subnets if
-                                netaddr.IPNetwork(s.cidr) in meta_cidr]
-            if metadata_subnets:
-                # Add a gateway so that packets can be routed back to VMs
-                device = ip_lib.IPDevice(interface_name,
-                                         self.root_helper,
-                                         namespace)
-                # Only 1 subnet on metadata access network
-                gateway_ip = metadata_subnets[0].gateway_ip
-                device.route.add_gateway(gateway_ip)
-        elif self.conf.use_namespaces:
+        if self.conf.use_namespaces:
             self._set_default_route(network)
 
         return interface_name
 
     def update(self, network):
         """Update device settings for the network's DHCP on this host."""
-        if self.conf.use_namespaces and not self.conf.enable_metadata_network:
+        if self.conf.use_namespaces:
             self._set_default_route(network)
 
     def destroy(self, network, device_name):

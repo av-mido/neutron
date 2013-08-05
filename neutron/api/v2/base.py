@@ -460,8 +460,8 @@ class Controller(object):
         # but pass only attributes in the original body and required
         # by the policy engine to the policy 'brain'
         field_list = [name for (name, value) in self._attr_info.iteritems()
-                      if ('required_by_policy' in value and
-                          value['required_by_policy'] or
+                      if (value.get('required_by_policy') or
+                          value.get('primary_key') or
                           'default' not in value)]
         orig_obj = self._item(request, id, field_list=field_list,
                               parent_id=parent_id)
@@ -548,7 +548,6 @@ class Controller(object):
             raise webob.exc.HTTPBadRequest(msg)
 
         Controller._populate_tenant_id(context, res_dict, is_create)
-
         Controller._verify_attributes(res_dict, attr_info)
 
         if is_create:  # POST
