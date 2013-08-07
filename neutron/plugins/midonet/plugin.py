@@ -180,7 +180,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         # Reject admin_state_up=False
         if network['network'].get('admin_state_up') and network['network'][
-            'admin_state_up'] is False:
+                'admin_state_up'] is False:
             raise q_exc.NotImplementedError(_('admin_state_up=False '
                                               'networks are not '
                                               'supported.'))
@@ -338,7 +338,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         session = context.session
         with session.begin(subtransactions=True):
             mrouter = self.client.create_tenant_router(
-                tenant_id, router['router']['name'], self.metadata_router)
+                tenant_id, router['router']['name'])
 
             qrouter = super(MidonetPluginV2, self).create_router(context,
                                                                  router)
@@ -366,7 +366,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         # figure out which operation it is in
         if ('external_gateway_info' in router['router'] and
-            'network_id' in router['router']['external_gateway_info']):
+                'network_id' in router['router']['external_gateway_info']):
             op_gateway_set = True
         elif ('external_gateway_info' in router['router'] and
               router['router']['external_gateway_info'] == {}):
@@ -441,8 +441,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             # Link the router and the bridge port.
             self.client.link_bridge_port_to_router(qport['port_id'], router_id,
                                                    gateway_ip, network_address,
-                                                   length,
-                                                   self.metadata_router)
+                                                   length)
 
         LOG.debug(_("MidonetPluginV2.add_router_interface exiting: "
                     "qport=%r"), qport)
@@ -492,8 +491,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         # Unlink the router and the bridge.
         self.client.unlink_bridge_port_from_router(port_id, network_addr,
-                                                   network_length,
-                                                   self.metadata_router)
+                                                   network_length)
 
         info = super(MidonetPluginV2, self).remove_router_interface(
             context, router_id, interface_info)
@@ -574,7 +572,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
             filters = {'security_group_id': [sg_id]}
             if super(MidonetPluginV2, self)._get_port_security_group_bindings(
-                context, filters):
+                    context, filters):
                 raise ext_sg.SecurityGroupInUse(id=sg_id)
 
             # Delete MidoNet Chains and portgroup for the SG

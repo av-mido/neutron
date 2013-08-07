@@ -265,34 +265,28 @@ class MidoClient:
             tenant_id).create()
 
     @handle_api_error
-    def create_tenant_router(self, tenant_id, name, metadata_router):
+    def create_tenant_router(self, tenant_id, name):
         """Create a new tenant router
 
         :param tenant_id: id of tenant creating the router
         :param name: name of the router
-        :param metadata_router: metadata router
         :returns: newly created router
         """
         LOG.debug(_("MidoClient.create_tenant_router called: "
-                    "tenant_id=%(tenant_id)s, name=%(name)s,"
-                    " metadata_router=%(metadata_router)s"),
-                  {'tenant_id': tenant_id, 'name': name,
-                   'metadata_router': metadata_router})
+                    "tenant_id=%(tenant_id)s, name=%(name)s"),
+                  {'tenant_id': tenant_id, 'name': name})
         router = self.create_router(tenant_id, name)
-        self.link_router_to_metadata_router(router, metadata_router)
+        self.create_router_chains(router)
         return router
 
     @handle_api_error
-    def delete_tenant_router(self, id, metadata_router):
+    def delete_tenant_router(self, id):
         """Delete a tenant router
 
         :param id: id of router
-        :param metadata_router: metadata router
         """
         LOG.debug(_("MidoClient.delete_tenant_router called: "
-                    "id=%(id)s, metadata_router=%(metadata_router)s"),
-                  {'id': id, 'metadata_router': metadata_router})
-        self.unlink_router_from_metadata_router(id, metadata_router)
+                    "id=%(id)s"), {'id': id})
         self.destroy_router_chains(id)
 
         # delete the router
@@ -337,7 +331,7 @@ class MidoClient:
 
     @handle_api_error
     def link_bridge_port_to_router(self, port_id, router_id, gateway_ip,
-                                   net_addr, net_len, metadata_router):
+                                   net_addr, net_len):
         """Link a tenant bridge port to the router
 
         :param port_id: port ID
@@ -345,16 +339,14 @@ class MidoClient:
         :param gateway_ip: IP address of gateway
         :param net_addr: network IP address
         :param net_len: network IP address length
-        :param metadata_router: metadata router instance
         """
         LOG.debug(_("MidoClient.link_bridge_port_to_router called: "
                     "port_id=%(port_id)s, router_id=%(router_id)s, "
                     "gateway_ip=%(gateway_ip)s net_addr=%(net_addr)s, "
-                    "net_len=%(net_len)s, "
-                    "metadata_router=%(metadata_router)s"),
+                    "net_len=%(net_len)s"),
                   {'port_id': port_id, 'router_id': router_id,
                    'gateway_ip': gateway_ip, 'net_addr': net_addr,
-                   'net_len': net_len, 'metadata_router': metadata_router})
+                   'net_len': net_len})
         router = self.get_router(router_id)
 
         # create an interior port on the router
@@ -371,49 +363,23 @@ class MidoClient:
                 net_addr).dst_network_length(net_len).weight(
                     100).next_hop_port(router_port.get_id()).create()
 
-        # add a route for the subnet in metadata router; forward
-        # packets destined to the subnet to the tenant router
-        for pp in metadata_router.get_peer_ports():
-            if pp.get_device_id() == router.get_id():
-                mdr_port_id = pp.get_peer_id()
-                break
-        else:
-            raise Exception(
-                _("Couldn't find a md router port for the router=%r"), router)
-
-        metadata_router.add_route().type('Normal').src_network_addr(
-            '0.0.0.0').src_network_length(0).dst_network_addr(
-                net_addr).dst_network_length(net_len).weight(
-                    100).next_hop_port(mdr_port_id).create()
-
     @handle_api_error
-    def unlink_bridge_port_from_router(self, port_id, net_addr, net_len,
-                                       metadata_router):
+    def unlink_bridge_port_from_router(self, port_id, net_addr, net_len):
         """Unlink a tenant bridge port from the router
 
         :param bridge_id: bridge ID
         :param net_addr: network IP address
         :param net_len: network IP address length
-        :param metadata_router: metadata router instance
         """
         LOG.debug(_("MidoClient.unlink_bridge_port_from_router called: "
                     "port_id=%(port_id)s, net_addr=%(net_addr)s, "
-                    "net_len=%(net_len)s, "
-                    "metadata_router=%(metadata_router)s"),
+                    "net_len=%(net_len)s"),
                   {'port_id': port_id, 'net_addr': net_addr,
-                   'net_len': net_len, 'metadata_router': metadata_router})
+                   'net_len': net_len})
         port = self.get_port(port_id)
         port.unlink()
         self.delete_port(port.get_peer_id())
         self.delete_port(port.get_id())
-
-        # delete the route for the subnet in the metadata router
-        for r in metadata_router.get_routes():
-            if (r.get_dst_network_addr() == net_addr and
-                r.get_dst_network_length() == net_len):
-                LOG.debug(_('Deleting route=%r ...'), r)
-                self.mido_api.delete_route(r.get_id())
-                break
 
     @handle_api_error
     def link_bridge_to_provider_router(self, bridge, provider_router,
@@ -570,14 +536,12 @@ class MidoClient:
 
         for r in chains['in'].get_rules():
             if OS_TENANT_ROUTER_RULE_KEY in r.get_properties():
-                if r.get_properties()[
-                    OS_TENANT_ROUTER_RULE_KEY] == SNAT_RULE:
+                if r.get_properties()[OS_TENANT_ROUTER_RULE_KEY] == SNAT_RULE:
                     self.mido_api.delete_rule(r.get_id())
 
         for r in chains['out'].get_rules():
             if OS_TENANT_ROUTER_RULE_KEY in r.get_properties():
-                if r.get_properties()[
-                    OS_TENANT_ROUTER_RULE_KEY] == SNAT_RULE:
+                if r.get_properties()[OS_TENANT_ROUTER_RULE_KEY] == SNAT_RULE:
                     self.mido_api.delete_rule(r.get_id())
 
     @handle_api_error
@@ -639,53 +603,10 @@ class MidoClient:
         # delete corresponding chains
         router = self.get_router(id)
         chains = self.get_router_chains(router.get_tenant_id(), id)
-        self.mido_api.delete_chain(chains['in'].get_id())
-        self.mido_api.delete_chain(chains['out'].get_id())
-
-    @handle_api_error
-    def link_router_to_metadata_router(self, router, metadata_router):
-        """Link a router to the metadata router
-
-        :param router: router to link
-        :param metadata_router: metadata router
-        """
-        LOG.debug(_("MidoClient.link_router_to_metadata_router called: "
-                    "router=%(router)s, metadata_router=%(metadata_router)s"),
-                  {'router': router, 'metadata_router': metadata_router})
-        # link to metadata router
-        in_port = metadata_router.add_interior_port()
-        mdr_port = in_port.network_address('169.254.255.0').network_length(
-            30).port_address('169.254.255.1').create()
-
-        tr_port = router.add_interior_port().network_address(
-            '169.254.255.0').network_length(30).port_address(
-                '169.254.255.2').create()
-        mdr_port.link(tr_port.get_id())
-
-        # forward metadata traffic to metadata router
-        router.add_route().type('Normal').src_network_addr(
-            '0.0.0.0').src_network_length(0).dst_network_addr(
-                '169.254.169.254').dst_network_length(32).weight(
-                    100).next_hop_port(tr_port.get_id()).create()
-
-    @handle_api_error
-    def unlink_router_from_metadata_router(self, id, metadata_router):
-        """Unlink a router from the metadata router
-
-        :param id: ID of router
-        :param metadata_router: metadata router
-        """
-        LOG.debug(_("MidoClient.unlink_router_from_metadata_router called: "
-                    "id=%(id)s, metadata_router=%(metadata_router)s"),
-                  {'id': id, 'metadata_router': metadata_router})
-        # unlink from metadata router and delete the interior ports
-        # that connect metadata router and this router.
-        for pp in metadata_router.get_peer_ports():
-            if pp.get_device_id() == id:
-                mdr_port = self.get_port(pp.get_peer_id())
-                pp.unlink()
-                self.mido_api.delete_port(pp.get_id())
-                self.mido_api.delete_port(mdr_port.get_id())
+        if 'in' in chains:
+            self.mido_api.delete_chain(chains['in'].get_id())
+        if 'out' in chains:
+            self.mido_api.delete_chain(chains['out'].get_id())
 
     @handle_api_error
     def setup_floating_ip(self, router_id, provider_router, floating_ip,
@@ -706,7 +627,7 @@ class MidoClient:
                   {'router_id': router_id, 'provider_router': provider_router,
                    'floating_ip': floating_ip, 'fixed_ip': fixed_ip,
                    'identifier': identifier})
-        # unlink from metadata router and delete the interior ports
+
         router = self.mido_api.get_router(router_id)
         # find the provider router port that is connected to the tenant
         # of the floating ip
