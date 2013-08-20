@@ -159,39 +159,63 @@ class MidoClient:
                 net_len).create()
 
     @handle_api_error
-    def create_dhcp_hosts(self, bridge, ip, mac):
-        """Create DHCP host entries
+    def add_dhcp_host(self, bridge, subnet_str, ip, mac):
+        """Add DHCP host entry
 
-        :param bridge: bridge of the DHCP
+        :param bridge: bridge the DHCP is configured for
+        :param subnet_str: subnet represented as x.x.x.x_y
         :param ip: IP address
         :param mac: MAC address
         """
-        LOG.debug(_("MidoClient.create_dhcp_hosts called: bridge=%(bridge)s, "
-                    "ip=%(ip)s, mac=%(mac)s"), {'bridge': bridge, 'ip': ip,
-                                                'mac': mac})
-        dhcp_subnets = bridge.get_dhcp_subnets()
-        if dhcp_subnets:
-            # Add the host to the first subnet as we currently support one
-            # subnet per network.
-            dhcp_subnets[0].add_dhcp_host().ip_addr(ip).mac_addr(mac).create()
+        LOG.debug(_("MidoClient.add_dhcp_host called: bridge=%(bridge)s, "
+                    "subnet=%(subnet)s, ip=%(ip)s, mac=%(mac)s"),
+                  {'bridge': bridge, 'subnet': subnet_str, 'ip': ip,
+                   'mac': mac})
+        subnet = bridge.get_dhcp_subnet(subnet_str)
+        if subnet is None:
+            raise MidonetApiException(msg="Tried to add to non-existent DHCP")
+
+        subnet.add_dhcp_host().ip_addr(ip).mac_addr(mac).create()
 
     @handle_api_error
-    def delete_dhcp_hosts(self, bridge_id, ip, mac):
-        """Delete DHCP host entries
+    def remove_dhcp_host(self, bridge, subnet_str, ip, mac):
+        """Remove DHCP host entry
 
-        :param bridge_id: id of the bridge of the DHCP
+        :param bridge: bridge the DHCP is configured for
+        :param subnet_str: subnet represented as x.x.x.x_y
         :param ip: IP address
         :param mac: MAC address
         """
-        LOG.debug(_("MidoClient.delete_dhcp_hosts called: "
-                    "bridge_id=%(bridge_id)s, ip=%(ip)s, mac=%(mac)s"),
-                  {'bridge_id': bridge_id, 'ip': ip, 'mac': mac})
+        LOG.debug(_("MidoClient.remove_dhcp_host called: bridge=%(bridge)s, "
+                    "subnet=%(subnet)s, ip=%(ip)s, mac=%(mac)s"),
+                  {'bridge': bridge, 'subnet': subnet_str, 'ip': ip,
+                   'mac': mac})
+        subnet = bridge.get_dhcp_subnet(subnet_str)
+        if subnet is None:
+            LOG.warn(_("Tried to delete mapping from non-existent subnet"))
+            return
+
+        for dh in subnet.get_dhcp_hosts():
+            if dh.get_mac_addr() == mac and dh.get_ip_addr() == ip:
+                LOG.debug(_("MidoClient.remove_dhcp_host: Deleting %(dh)r"),
+                          {"dh": dh})
+                dh.delete()
+
+    @handle_api_error
+    def delete_dhcp_host(self, bridge_id, subnet_str, ip, mac):
+        """Delete DHCP host entry
+
+        :param bridge_id: id of the bridge of the DHCP
+        :param subnet_str: subnet represented as x.x.x.x_y
+        :param ip: IP address
+        :param mac: MAC address
+        """
+        LOG.debug(_("MidoClient.delete_dhcp_host called: "
+                    "bridge_id=%(bridge_id)s, subnet=%(subnet)s, ip=%(ip)s, "
+                    "mac=%(mac)s"), {'bridge': bridge, 'subnet': subnet_str,
+                                     'ip': ip, 'mac': mac})
         bridge = self.get_bridge(bridge_id)
-        dhcp_subnets = bridge.get_dhcp_subnets()
-        if dhcp_subnets:
-            for dh in dhcp_subnets[0].get_dhcp_hosts():
-                if dh.get_mac_addr() == mac and dh.get_ip_addr() == ip:
-                    dh.delete()
+        remove_dhcp_host(bridge, subnet_str, ip, mac)
 
     @handle_api_error
     def delete_dhcp(self, bridge):
@@ -229,26 +253,15 @@ class MidoClient:
             raise MidonetResourceNotFound(resource_type='Port', id=id)
 
     @handle_api_error
-    def create_exterior_bridge_port(self, bridge):
-        """Create a new exterior bridge port
+    def add_bridge_port(self, bridge):
+        """Add a port on a bridge
 
-        :param bridge: bridge object to add port to
+        :param bridge: Bridge to add a new port to
         :returns: newly created port
         """
-        LOG.debug(_("MidoClient.create_exterior_bridge_port called: "
+        LOG.debug(_("MidoClient.add_bridge_port called: "
                     "bridge=%(bridge)s"), {'bridge': bridge})
-        return bridge.add_exterior_port().create()
-
-    @handle_api_error
-    def create_interior_bridge_port(self, bridge):
-        """Create a new interior bridge port
-
-        :param bridge: bridge object to add port to
-        :returns: newly created port
-        """
-        LOG.debug(_("MidoClient.create_interior_bridge_port called: "
-                    "bridge=%(bridge)s"), {'bridge': bridge})
-        return bridge.add_interior_port().create()
+        return bridge.add_port().create()
 
     @handle_api_error
     def create_router(self, tenant_id, name):
