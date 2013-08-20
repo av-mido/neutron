@@ -212,10 +212,11 @@ class MidoClient:
         """
         LOG.debug(_("MidoClient.delete_dhcp_host called: "
                     "bridge_id=%(bridge_id)s, subnet=%(subnet)s, ip=%(ip)s, "
-                    "mac=%(mac)s"), {'bridge': bridge, 'subnet': subnet_str,
+                    "mac=%(mac)s"), {'bridge_id': bridge_id,
+                                     'subnet': subnet_str,
                                      'ip': ip, 'mac': mac})
         bridge = self.get_bridge(bridge_id)
-        remove_dhcp_host(bridge, subnet_str, ip, mac)
+        self.remove_dhcp_host(bridge, subnet_str, ip, mac)
 
     @handle_api_error
     def delete_dhcp(self, bridge):

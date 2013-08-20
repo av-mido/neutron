@@ -23,6 +23,7 @@
 from midonetclient import api
 from oslo.config import cfg
 
+from neutron.common import constants
 from neutron.common import exceptions as q_exc
 from neutron.db import api as db
 from neutron.db import db_base_plugin_v2
@@ -38,9 +39,14 @@ from neutron.plugins.midonet import midonet_lib
 LOG = logging.getLogger(__name__)
 
 
-def _is_compute_or_unowned_port(port):
+def _is_vif_port(port):
+    """Check whether the given port is standard VIF port
+
+    :param port: port to check
+    """
     device_owner = port['device_owner']
-    return (device_owner.startswith('compute:') or device_owner is '')
+    return (device_owner != l3_db.DEVICE_OWNER_ROUTER_GW and
+            device_owner != l3_db.DEVICE_OWNER_ROUTER_INTF)
 
 
 def _check_resource_exists(func, id, name, raise_exc=False):
@@ -90,12 +96,10 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         db.configure_db()
 
-    def _get_subnet_str(self, id):
+    def _get_subnet_str(self, context, id):
         subnet = super(MidonetPluginV2, self).get_subnet(context, id,
                                                          fields=None)
-        if subnet is None:
-            return None
-        return subnet.replace("/", "_")
+        return subnet['cidr'].replace("/", "_")
 
     def create_subnet(self, context, subnet):
         """Create Neutron subnet.
@@ -241,34 +245,19 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                       'had been deleted'), id)
             raise
 
-    def _add_port_dhcp_mappings(self, bridge, port):
-        if 'fixed_ips' not in port or 'mac_address' not in port:
-            return
-
+    def _add_port_dhcp_mappings(self, context, bridge, port):
         mac = port["mac_address"]
         for fixed_ip in port["fixed_ips"]:
-            subnet = self._get_subnet_str(fixed_ip["subnet_id"])
-            self.client.add_dhcp_host(bridge, subnet, fixed_ip["ip_address"],
-                                      mac)
+            subnet = self._get_subnet_str(context, fixed_ip["subnet_id"])
+            self.client.add_dhcp_host(bridge, subnet,
+                                      fixed_ip["ip_address"], mac)
 
-    def _del_port_dhcp_mappings(self, context, id):
-        port = super(MidonetPluginV2, self).get_port(context, id, None)
-        if 'fixed_ips' not in port or 'mac_address' not in port:
-            return
-
+    def _del_port_dhcp_mappings(self, context, port):
         mac = port["mac_address"]
         for fixed_ip in port["fixed_ips"]:
-            subnet = self._get_subnet_str(fixed_ip["subnet_id"])
+            subnet = self._get_subnet_str(context, fixed_ip["subnet_id"])
             self.client.delete_dhcp_host(port["network_id"], subnet,
                                          fixed_ip['ip_address'], mac)
-
-    def _delete_bridge_port(self, context, port_id):
-        self._del_port_dhcp_mappings(context, port_id)
-        self.client.delete_port(port_id)
-
-    def _process_port_security_groups(self, context, port):
-        sg_ids = self._get_security_groups_on_port(context, port)
-        self._process_port_create_security_group(context, port, sg_ids)
 
     def create_port(self, context, port):
         """Create a L2 port in Neutron/MidoNet."""
@@ -276,33 +265,43 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         port_data = port['port']
 
-        # Create a bridge port in MidoNet and set the bridge ID as the port ID
-        # in Neutron.
+        # Create a bridge port in MidoNet and set the bridge port ID as the
+        # port ID in Neutron.
         bridge = self.client.get_bridge(port_data["network_id"])
         bridge_port = self.client.add_bridge_port(bridge)
         port_data["id"] = bridge_port.get_id()
 
-        session = context.session
         try:
+            session = context.session
             with session.begin(subtransactions=True):
-
-                # Create a new Neutron port
+                # Create a Neutron port
                 new_port = super(MidonetPluginV2, self).create_port(context,
                                                                     port)
                 port_data.update(new_port)
 
-                # Associate security groups to the port
-                self._process_port_security_groups(context, port)
-
-                if _is_compute_or_unowned_port(port_data):
-                    # Add a DHCP mapping for each fixed IP
-                    self._add_port_dhcp_mappings(bridge, port_data)
+                # Bind security groups to the port
+                sg_ids = self._get_security_groups_on_port(context, port)
+                self._process_port_create_security_group(context, port, sg_ids)
         except Exception:
-            # Try cleaning up the MidoNet data
+            # Try removing the MidoNet port before raising an exception.
             with excutils.save_and_reraise_exception():
                 LOG.error(_("Failed to create a port on network %(net_id)s"),
                           {"net_id": port_data["network_id"]})
-                self._delete_bridge_port(context, bridge_port.get_id())
+                self.client.delete_port(bridge_port.get_id())
+
+        if _is_vif_port(port_data):
+            # DHCP mapping is only for VIF ports
+            try:
+                self._add_port_dhcp_mappings(context, bridge, port_data)
+            except Exception:
+                LOG.error(_("Failed to create DHCP mapping for port %(port)s"),
+                          {"port": port_data["id"]})
+                # DHCP mapping error sets the port to error state
+                with context.session.begin(subtransactions=True):
+                    p = self._get_port(context, port_data["id"])
+                    port_data['status'] = constants.PORT_STATUS_ERROR
+                    p['status'] = port_data['status']
+                    context.session.add(p)
 
         LOG.debug(_("MidonetPluginV2.create_port exiting: port=%r"), port_data)
         return port_data
@@ -311,9 +310,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         """Retrieve port."""
         LOG.debug(_("MidonetPluginV2.get_port called: id=%(id)s "
                     "fields=%(fields)r"), {'id': id, 'fields': fields})
-
         port = super(MidonetPluginV2, self).get_port(context, id, fields)
-        self._check_resource_exists(self.client.get_port, id, "port")
+        _check_resource_exists(self.client.get_port, id, "port")
 
         LOG.debug(_("MidonetPluginV2.get_port exiting: port=%r"), port)
         return port
@@ -341,10 +339,15 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         if l3_port_check:
             self.prevent_l3_port_deletion(context, id)
 
-        session = context.session
-        with session.begin(subtransactions=True):
-            super(MidonetPluginV2, self).delete_port(context, id)
-            self._delete_bridge_port(context, id)
+        port = self.get_port(context, id)
+        self.client.delete_port(id)
+        try:
+            self._del_port_dhcp_mappings(context, port)
+        except Exception:
+            LOG.error(_("Failed to delete DHCP mapping for port %(id)s"),
+                      {"id": id})
+
+        super(MidonetPluginV2, self).delete_port(context, id)
 
     #
     # L3 APIs.
