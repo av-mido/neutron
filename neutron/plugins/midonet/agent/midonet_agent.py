@@ -32,7 +32,7 @@ from neutron.plugins.midonet import config
 LOG = logging.getLogger(__name__)
 
 
-class DhcpNoOpDriver(dhcp.DhcpLocalProcess):
+class DhcpNoOpDriver(dhcp.DhcpBase):
 
     @classmethod
     def existing_dhcp_networks(cls, conf, root_helper):
@@ -44,22 +44,28 @@ class DhcpNoOpDriver(dhcp.DhcpLocalProcess):
         """Execute version checks on DHCP server."""
         return float(1)
 
-    @classmethod
+    def enable(self):
+        """Enables DHCP for this network."""
+        self.device_delegate.setup(self.network, reuse_existing=True)
+
+    def disable(self, retain_port=False):
+        """Disable DHCP for this network."""
+        pass
+
+    def active(self):
+        """Boolean representing the running state of the DHCP server."""
+        return True
+
+    def release_lease(self, mac_address, removed_ips):
+        """Release a DHCP lease."""
+        pass
+
     def reload_allocations(self):
         """Force the DHCP server to reload the assignment database."""
         pass
 
-    def spawn_process(self):
-        """Enables DHCP for this network."""
+    def spawn_process(self, mac_address, removed_ips):
         pass
-
-    def disable(self, retain_port=False):
-        """Disable DHCP for this network."""
-
-        if not retain_port:
-            self.device_delegate.destroy(self.network, self.interface_name)
-
-        self._remove_config_files()
 
 
 midonet_interface_driver_opts = [
@@ -97,13 +103,12 @@ class MidonetInterfaceDriver(interface.LinuxInterfaceDriver):
                            lines)[0].strip()[len('host_uuid='):]
         return host_uuid
 
+    def plug(self, network_id, port_id, device_name, mac_address,
+             bridge=None, namespace=None, prefix=None):
         """
         This method is called by the Dhcp agent or by the L3 agent when
         a new network is created
         """
-    def plug(self, network_id, port_id, device_name, mac_address,
-             bridge=None, namespace=None, prefix=None):
-
         if not ip_lib.device_exists(device_name,
                                     self.root_helper,
                                     namespace=namespace):

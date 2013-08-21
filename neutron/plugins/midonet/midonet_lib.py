@@ -39,6 +39,7 @@ SNAT_RULE = 'SNAT'
 SNAT_RULE_PROPERTY = {OS_TENANT_ROUTER_RULE_KEY: SNAT_RULE}
 SUFFIX_IN = '_IN'
 SUFFIX_OUT = '_OUT'
+METADATA_DEFAULT_IP = '169.254.169.254'
 
 
 def sg_label(sg_id, sg_name):
@@ -344,6 +345,25 @@ class MidoClient:
             raise MidonetResourceNotFound(resource_type='Router', id=id)
 
     @handle_api_error
+    def add_metadata_dhcp_route_option(self, bridge, subnet, ip):
+        """Add Option121 route to subnet for metadata service
+
+        :param bridge: Bridge to add the option route to
+        :param subnet: subnet represented as x.x.x.x_y
+        :param ip: IP address of the next hop
+        """
+        LOG.debug(_("MidoClient.add_metadata_dhcp_route_option called: "
+                    "bridge=%(bridge)s, subnet=%(subnet)s, ip=%(ip)s"),
+                  {"bridge": bridge, "subnet": subnet, "ip": ip})
+        subnet = bridge.get_dhcp_subnet(subnet_str)
+        if subnet is None:
+            raise MidonetApiException(msg="Tried to access non-existent DHCP")
+
+        routes = [{'destinationPrefix': METADATA_DEFAULT_IP,
+                   'destinationLength': 32, 'gatewayAddr': ip}]
+        subnet.opt121_routes(routes).update()
+
+    @handle_api_error
     def link_bridge_port_to_router(self, port_id, router_id, gateway_ip,
                                    net_addr, net_len):
         """Link a tenant bridge port to the router
@@ -363,8 +383,8 @@ class MidoClient:
                    'net_len': net_len})
         router = self.get_router(router_id)
 
-        # create an interior port on the router
-        in_port = router.add_interior_port()
+        # create a port on the router
+        in_port = router.add_port()
         router_port = in_port.port_address(gateway_ip).network_address(
             net_addr).network_length(net_len).create()
 
@@ -413,13 +433,13 @@ class MidoClient:
                   {'bridge': bridge, 'provider_router': provider_router,
                    'gateway_ip': gateway_ip, 'net_addr': net_addr,
                    'net_len': net_len})
-        # create an interior port on the provider router
-        in_port = provider_router.add_interior_port()
+        # create a port on the provider router
+        in_port = provider_router.add_port()
         pr_port = in_port.port_address(gateway_ip).network_address(
             net_addr).network_length(net_len).create()
 
-        # create an interior bridge port, then link it to the router.
-        br_port = bridge.add_interior_port().create()
+        # create a bridge port, then link it to the router.
+        br_port = bridge.add_port().create()
         pr_port.link(br_port.get_id())
 
         # add a route for the subnet in the provider router
@@ -473,14 +493,14 @@ class MidoClient:
                    'snat_ip': snat_ip})
         tenant_router = self.get_router(id)
 
-        # Create a interior port in the provider router
-        in_port = provider_router.add_interior_port()
+        # Create a port in the provider router
+        in_port = provider_router.add_port()
         pr_port = in_port.network_address(
             '169.254.255.0').network_length(30).port_address(
                 '169.254.255.1').create()
 
         # Create a port in the tenant router
-        tr_port = tenant_router.add_interior_port().network_address(
+        tr_port = tenant_router.add_port().network_address(
             '169.254.255.0').network_length(30).port_address(
                 '169.254.255.2').create()
 
