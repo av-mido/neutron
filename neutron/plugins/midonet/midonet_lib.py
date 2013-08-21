@@ -345,16 +345,16 @@ class MidoClient:
             raise MidonetResourceNotFound(resource_type='Router', id=id)
 
     @handle_api_error
-    def add_metadata_dhcp_route_option(self, bridge, subnet, ip):
+    def add_metadata_dhcp_route_option(self, bridge, subnet_str, ip):
         """Add Option121 route to subnet for metadata service
 
         :param bridge: Bridge to add the option route to
-        :param subnet: subnet represented as x.x.x.x_y
+        :param subnet_str: subnet represented as x.x.x.x_y
         :param ip: IP address of the next hop
         """
         LOG.debug(_("MidoClient.add_metadata_dhcp_route_option called: "
-                    "bridge=%(bridge)s, subnet=%(subnet)s, ip=%(ip)s"),
-                  {"bridge": bridge, "subnet": subnet, "ip": ip})
+                    "bridge=%(bridge)s, subnet_str=%(subnet_str)s, ip=%(ip)s"),
+                  {"bridge": bridge, "subnet_str": subnet_str, "ip": ip})
         subnet = bridge.get_dhcp_subnet(subnet_str)
         if subnet is None:
             raise MidonetApiException(msg="Tried to access non-existent DHCP")

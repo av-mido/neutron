@@ -284,7 +284,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
     def _metadata_subnets(self, context, port):
         for fixed_ip in port["fixed_ips"]:
             subnet = self._get_subnet(context, fixed_ip["subnet_id"])
-            if subnet["ip_version"] == 6 or subnet["gateway_ip"] is not None:
+            if subnet["ip_version"] == 6:
                 continue
             subnet_str = _get_subnet_str(subnet)
             yield subnet_str, fixed_ip["ip_address"]
@@ -321,15 +321,15 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 self.client.delete_port(bridge_port.get_id())
 
         try:
-            if _is_vif_port(port_data):
+            if _is_dhcp_port(port_data):
+                # For DHCP port, add a metadata route
+                for subnet, ip in self._metadata_subnets(context, port_data):
+                    self.client.add_metadata_dhcp_route_option(bridge, subnet,
+                                                               ip)
+            elif _is_vif_port(port_data):
                 # DHCP mapping is only for VIF ports
                 for subnet, ip, mac in self._dhcp_mappings(context, port_data):
                     self.client.add_dhcp_host(bridge, subnet, ip, mac)
-            elif _is_dhcp_port(port_data):
-                # For DHCP port, add a metadata route
-                for subnet, ip in self._metadata_subnets(context, port):
-                    self.client.add_metadata_dhcp_route_option(bridge, subnet,
-                                                               ip)
         except Exception as ex:
             LOG.error(_("Failed to configure DHCP for port %(port)s, %(err)s"),
                       {"port": port_data["id"], "err": ex})
