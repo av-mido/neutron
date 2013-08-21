@@ -751,7 +751,7 @@ class MidoClient:
 
     @handle_api_error
     def create_for_sg(self, tenant_id, sg_id, sg_name):
-        """Create a new chain for security group.
+        """Create resources to represent a security group.
 
         Creating a security group creates a pair of chains in MidoNet, one for
         inbound and the other for outbound.
@@ -760,7 +760,6 @@ class MidoClient:
                     "tenant_id=%(tenant_id)s sg_id=%(sg_id)s "
                     "sg_name=%(sg_name)s "),
                   {'tenant_id': tenant_id, 'sg_id': sg_id, 'sg_name': sg_name})
-
         cnames = chain_names(sg_id, sg_name)
         self.mido_api.add_chain().tenant_id(tenant_id).name(
             cnames['in']).create()

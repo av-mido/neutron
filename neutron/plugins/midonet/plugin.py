@@ -214,25 +214,18 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         LOG.debug(_('MidonetPluginV2.create_network called: network=%r'),
                   network)
 
-        if network['network']['admin_state_up'] is False:
-            LOG.warning(_('Ignoring admin_state_up=False for network=%r '
-                          'because it is not yet supported'), network)
-
         tenant_id = self._get_tenant_id_for_create(context, network['network'])
-
         self._ensure_default_security_group(context, tenant_id)
+
+        bridge = self.client.create_bridge(tenant_id,
+                                           network['network']['name'])
+        network['network']['id'] = bridge.get_id()
 
         session = context.session
         with session.begin(subtransactions=True):
-            bridge = self.client.create_bridge(tenant_id,
-                                               network['network']['name'])
-
-            # Set MidoNet bridge ID to the neutron DB entry
-            network['network']['id'] = bridge.get_id()
             net = super(MidonetPluginV2, self).create_network(context, network)
-
-            # to handle l3 related data in DB
             self._process_l3_create(context, net, network['network'])
+
         LOG.debug(_("MidonetPluginV2.create_network exiting: net=%r"), net)
         return net
 
@@ -244,14 +237,6 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         """
         LOG.debug(_("MidonetPluginV2.update_network called: id=%(id)r, "
                     "network=%(network)r"), {'id': id, 'network': network})
-
-        # Reject admin_state_up=False
-        if network['network'].get('admin_state_up') and network['network'][
-                'admin_state_up'] is False:
-            raise q_exc.NotImplementedError(_('admin_state_up=False '
-                                              'networks are not '
-                                              'supported.'))
-
         session = context.session
         with session.begin(subtransactions=True):
             net = super(MidonetPluginV2, self).update_network(
@@ -325,7 +310,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
                 # Bind security groups to the port
                 sg_ids = self._get_security_groups_on_port(context, port)
-                self._process_port_create_security_group(context, port, sg_ids)
+                self._process_port_create_security_group(context, port_data,
+                                                         sg_ids)
         except Exception as ex:
             # Try removing the MidoNet port before raising an exception.
             with excutils.save_and_reraise_exception():
@@ -606,12 +592,13 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         LOG.debug(_("MidonetPluginV2.update_floating_ip exiting: fip=%s"), fip)
         return fip
 
-    #
-    # Security groups supporting methods
-    #
-
     def create_security_group(self, context, security_group, default_sg=False):
-        """Create chains for Neutron security group."""
+        """Create security group.
+
+        Create a new security group, including the default security group.
+        In MidoNet, this means creating a pair of chains, inbound and outbound,
+        as well as a new port group.
+        """
         LOG.debug(_("MidonetPluginV2.create_security_group called: "
                     "security_group=%(security_group)s "
                     "default_sg=%(default_sg)s "),
@@ -619,18 +606,26 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         sg = security_group.get('security_group')
         tenant_id = self._get_tenant_id_for_create(context, sg)
+        if not default_sg:
+            self._ensure_default_security_group(context, tenant_id)
 
-        with context.session.begin(subtransactions=True):
-            sg_db_entry = super(MidonetPluginV2, self).create_security_group(
-                context, security_group, default_sg)
+        # Create the Neutron sg first
+        sg = super(MidonetPluginV2, self).create_security_group(
+            context, security_group, default_sg)
 
-            # Create MidoNet chains and portgroup for the SG
-            self.client.create_for_sg(tenant_id, sg_db_entry['id'],
-                                      sg_db_entry['name'])
+        # Create the MidoNet side
+        try:
+            self.client.create_for_sg(tenant_id, sg['id'], sg['name'])
+        except Exception:
+            LOG.error(_("Failed to create MidoNet resources for sg %(sg)s"),
+                      sg)
+            with excutils.save_and_reraise_exception():
+                with context.session.begin(subtransactions=True):
+                    context.session.delete(sg)
 
-            LOG.debug(_("MidonetPluginV2.create_security_group exiting: "
-                        "sg_db_entry=%r"), sg_db_entry)
-            return sg_db_entry
+        LOG.debug(_("MidonetPluginV2.create_security_group exiting: sg=%r"),
+                   sg)
+        return sg
 
     def delete_security_group(self, context, id):
         """Delete chains for Neutron security group."""
