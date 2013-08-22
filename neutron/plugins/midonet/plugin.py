@@ -514,7 +514,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                                               subnet["cidr"])
         except Exception:
             LOG.error(_("Failed to create MidoNet resources to add router "
-                        "interface. info=%(info), router_id=%(router_id)"),
+                        "interface. info=%(info)s, router_id=%(router_id)s"),
                       {"info": info, "router_id": router_id})
             with excutils.save_and_reraise_exception():
                 with context.session.begin(subtransactions=True):
@@ -530,19 +530,14 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                     "router_id=%(router_id)s "
                     "interface_info=%(interface_info)r"),
                   {'router_id': router_id, 'interface_info': interface_info})
+
+        # Need to find the port
         port_id = None
-        if 'port_id' in interface_info:
-
-            port_id = interface_info['port_id']
-            subnet_id = self.get_port(context,
-                                      interface_info['port_id']
-                                      )['fixed_ips'][0]['subnet_id']
-
-            subnet = self._get_subnet(context, subnet_id)
-
-        if 'subnet_id' in interface_info:
-
-            subnet_id = interface_info['subnet_id']
+        subnet = None
+        if "port_id" in interface_info:
+            port_id = interface_info["port_id"]
+        elif "subnet_id" in interface_info:
+            subnet_id = interface_info["subnet_id"]
             subnet = self._get_subnet(context, subnet_id)
             network_id = subnet['network_id']
 
@@ -555,23 +550,35 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             network_port = None
             for p in ports:
                 if p['fixed_ips'][0]['subnet_id'] == subnet_id:
-                    network_port = p
+                    port_id = p["id"]
                     break
-            assert network_port
-            port_id = network_port['id']
 
-        assert port_id
+            if port_id is None:
+                raise l3.RouterInterfaceNotFoundForSubnet(router_id=router_id,
+                                                          subnet_id=subnet_id)
+        else:
+            raise ValueError(_("Invalid interface info: no port_id/subnet_id"))
 
-        # get network information from subnet data
-        network_addr, network_length = subnet['cidr'].split('/')
-        network_length = int(network_length)
+        # Unlink and remove the peer
+        self.client.unlink_bridge_from_router(port_id)
+        try:
+            # Remove from DB
+            info = super(MidonetPluginV2, self).remove_router_interface(
+                context, router_id, interface_info)
+        except Exception:
+            LOG.error(_("Failed to delete router interface. "
+                        "info=%(info)s, router_id=%(router_id)s"),
+                      {"info": interface_info, 'router_id': router_id})
+            with excutils.save_and_reraise_exception():
+                # Try linking again
+                if subnet is None:
+                    port_db = self._get_port(context, port_id)
+                    subnet_id = port_db['fixed_ips'][0]['subnet_id']
+                    subnet = self._get_subnet(context, subnet_id)
+                self.client.link_bridge_to_router(port_id, router_id,
+                                                  subnet["gateway_ip"],
+                                                  subnet["cidr"])
 
-        # Unlink the router and the bridge.
-        self.client.unlink_bridge_port_from_router(port_id, network_addr,
-                                                   network_length)
-
-        info = super(MidonetPluginV2, self).remove_router_interface(
-            context, router_id, interface_info)
         LOG.debug(_("MidonetPluginV2.remove_router_interface exiting"))
         return info
 

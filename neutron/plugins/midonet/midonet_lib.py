@@ -382,7 +382,7 @@ class MidoClient:
         :param port_id: port ID
         :param router_id: router id to link to
         :param gateway_ip: IP address of gateway
-        :param cidr: network CIDR 
+        :param cidr: network CIDR
         :param net_addr: network IP address
         :param net_len: network IP address length
         """
@@ -410,26 +410,23 @@ class MidoClient:
                     100).next_hop_port(router_port.get_id()).create()
 
     @handle_api_error
-    def unlink_bridge_port_from_router(self, port_id, net_addr, net_len):
-        """Unlink a tenant bridge port from the router
+    def unlink_bridge_from_router(self, port_id):
+        """Unlink a tenant bridge port from the router.
 
-        :param bridge_id: bridge ID
-        :param net_addr: network IP address
-        :param net_len: network IP address length
+        :param port_id: port ID
         """
-        LOG.debug(_("MidoClient.unlink_bridge_port_from_router called: "
-                    "port_id=%(port_id)s, net_addr=%(net_addr)s, "
-                    "net_len=%(net_len)s"),
-                  {'port_id': port_id, 'net_addr': net_addr,
-                   'net_len': net_len})
+        LOG.debug(_("MidoClient.unlink_bridge_from_router called: "
+                    "port_id=%(port_id)s"), {'port_id': port_id})
         port = self.get_port(port_id)
+        if port is None:
+            raise MidonetResourceNotFound(resource_type='Port', id=port_id)
+
         if port.get_peer_id():
             port.unlink()
             self.delete_port(port.get_peer_id())
         else:
             LOG.warn(_("Attempted to unlink a port that was not linked. %s"),
                      port.get_id())
-        self.delete_port(port.get_id())
 
     @handle_api_error
     def link_bridge_to_provider_router(self, bridge, provider_router,
