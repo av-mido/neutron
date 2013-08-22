@@ -94,17 +94,16 @@ class MidoClientTestCase(testtools.TestCase):
         self.mock_api_cfg.setup()
         self.client = midonet_lib.MidoClient(self.mock_api)
 
-    def test_create_for_sg(self):
+    def test_create_sg(self):
         sg_id = uuidutils.generate_uuid()
         sg_name = 'test-sg'
-        calls = [mock.call.add_chain().tenant_id(self._tenant_id),
-                 mock.call.add_port_group().tenant_id(self._tenant_id)]
+        calls = [mock.call.add_chain().tenant_id(self._tenant_id)]
 
-        self.client.create_for_sg(self._tenant_id, sg_id, sg_name)
+        self.client.create_chain(self._tenant_id, sg_name)
 
         self.mock_api.assert_has_calls(calls, any_order=True)
 
-    def test_create_for_sg_rule(self):
+    def test_create_accept_sg_rule(self):
         sg_id = uuidutils.generate_uuid()
         sg_name = 'test-sg'
         in_chain_id = uuidutils.generate_uuid()
@@ -125,7 +124,7 @@ class MidoClientTestCase(testtools.TestCase):
                     None).tp_src_end(None).tp_dst_start(1).tp_dst_end(
                         65535).properties(props).create()]
 
-        self.client.create_for_sg_rule(sg_rule)
+        self.client.add_accept_chain_rule(sg_rule)
 
         # Egress chain rule added
         self.mock_api_cfg.chains_out[0].assert_has_calls(calls)
@@ -141,48 +140,32 @@ class MidoClientTestCase(testtools.TestCase):
         self.mock_api.assert_has_calls(api_calls)
         router.assert_has_calls(router_calls)
 
-    def test_delete_for_sg(self):
-        sg_id = uuidutils.generate_uuid()
-        sg_name = 'test-sg'
-        in_chain_id = uuidutils.generate_uuid()
-        out_chain_id = uuidutils.generate_uuid()
-        pg_id = uuidutils.generate_uuid()
+    def test_delete_chain(self):
+        chain_id = uuidutils.generate_uuid()
+        chain_name = 'test-chain'
         self.mock_api_cfg.chains_in = [
-            _create_test_sg_in_chain(sg_id, sg_name, in_chain_id,
-                                     self._tenant_id),
-            _create_test_sg_out_chain(sg_id, sg_name, out_chain_id,
-                                      self._tenant_id)]
-        self.mock_api_cfg.port_groups_in = [
-            _create_test_port_group(sg_id, sg_name, pg_id, self._tenant_id)]
+            _create_test_chain(chain_id, chain_name, self._tenant_id)]
 
         calls = [mock.call.get_chains({"tenant_id": self._tenant_id}),
-                 mock.call.delete_chain(in_chain_id),
-                 mock.call.delete_chain(out_chain_id),
-                 mock.call.get_port_groups({"tenant_id": self._tenant_id}),
-                 mock.call.delete_port_group(pg_id)]
+                 mock.call.delete_chain(chain_id)]
 
-        self.client.delete_for_sg(self._tenant_id, sg_id, sg_name)
+        self.client.delete_chains_by_names(self._tenant_id, chain_name)
 
         self.mock_api.assert_has_calls(calls)
 
-    def test_delete_for_sg_rule(self):
-        sg_id = uuidutils.generate_uuid()
-        sg_name = 'test-sg'
-        in_chain_id = uuidutils.generate_uuid()
-        out_chain_id = uuidutils.generate_uuid()
+    def test_delete_chain_rule(self):
+        chain_id = uuidutils.generate_uuid()
+        chain_name = 'test-chain'
         self.mock_api_cfg.chains_in = [
-            _create_test_sg_in_chain(sg_id, sg_name, in_chain_id,
-                                     self._tenant_id),
-            _create_test_sg_out_chain(sg_id, sg_name, out_chain_id,
-                                      self._tenant_id)]
+            _create_test_chain(chain_id, chain_name, self._tenant_id)]
 
         rule_id = uuidutils.generate_uuid()
         sg_rule_id = uuidutils.generate_uuid()
-        rule = _create_test_sg_chain_rule(rule_id, in_chain_id, sg_rule_id)
+        rule = _create_test_sg_chain_rule(rule_id, chain_id, sg_rule_id)
         self.mock_api_cfg.chains_in[0]['rules'] = [rule]
-        sg_rule = _create_test_sg_rule(self._tenant_id, sg_id, sg_rule_id)
 
-        self.client.delete_for_sg_rule(sg_rule)
+        self.client.delete_rules_by_property(chain_id, 'os_sg_rule_id',
+                                                 sg_rule_id)
 
         self.mock_api.delete_rule.assert_called_once_with(rule_id)
 
@@ -203,7 +186,7 @@ class MidoClientTestCase(testtools.TestCase):
         self.mock_api.get_bridge.side_effect = w_exc.HTTPNotFound()
         self.assertRaises(midonet_lib.MidonetResourceNotFound,
                           self.client.get_bridge, uuidutils.generate_uuid())
-
+    '''
     def test_get_port_groups_for_sg(self):
         sg_id = uuidutils.generate_uuid()
         pg_id = uuidutils.generate_uuid()
@@ -214,6 +197,7 @@ class MidoClientTestCase(testtools.TestCase):
 
         self.assertIsNotNone(pg)
         self.assertEqual(pg.get_id(), pg_id)
+    '''
 
     def _create_test_rule(self, tenant_id, sg_id, rule_id, direction="egress",
                           protocol="tcp", port_min=1, port_max=65535,
@@ -256,23 +240,14 @@ class MidoClientTestCase(testtools.TestCase):
         self.assertEqual(chains['in'].get_id(), in_chain_id)
         self.assertEqual(chains['out'].get_id(), out_chain_id)
 
-    def test_get_sg_chains(self):
-        sg_id = uuidutils.generate_uuid()
-        sg_name = 'test-sg'
-        in_chain_id = uuidutils.generate_uuid()
-        out_chain_id = uuidutils.generate_uuid()
+    def test_get_chain_by_name(self):
+        chain_id = uuidutils.generate_uuid()
+        chain_name = 'test-sg'
         self.mock_api_cfg.chains_in = [
-            _create_test_sg_in_chain(sg_id, sg_name, in_chain_id,
-                                     self._tenant_id),
-            _create_test_sg_out_chain(sg_id, sg_name, out_chain_id,
-                                      self._tenant_id)]
+            _create_test_chain(chain_id, chain_name, self._tenant_id)]
 
-        chains = self.client.get_sg_chains(self._tenant_id, sg_id)
+        chain = self.client.get_chain_by_name(self._tenant_id, chain_name)
 
         self.mock_api.assert_has_calls(mock.call.get_chains(
             {"tenant_id": self._tenant_id}))
-        self.assertEqual(len(chains), 2)
-        self.assertIn('in', chains)
-        self.assertIn('out', chains)
-        self.assertEqual(chains['in'].get_id(), in_chain_id)
-        self.assertEqual(chains['out'].get_id(), out_chain_id)
+        self.assertEqual(chain.get_id(), chain_id)
