@@ -35,6 +35,7 @@ from neutron.db import dhcp_rpc_base
 from neutron.db import l3_db
 from neutron.db import models_v2
 from neutron.db import securitygroups_db
+from neutron.extensions import l3
 from neutron.extensions import securitygroup as ext_sg
 from neutron.openstack.common import excutils
 from neutron.openstack.common import log as logging
