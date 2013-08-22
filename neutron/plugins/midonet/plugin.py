@@ -632,8 +632,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
             # Create all the rules for this SG.  Only accept rules are created
             for r in sg['security_group_rules']:
-               self._create_accept_chain_rule(context, r, sg=sg,
-                                              chain=chains[r['direction']])
+                self._create_accept_chain_rule(context, r, sg=sg,
+                                               chain=chains[r['direction']])
         except Exception:
             LOG.error(_("Failed to create MidoNet resources for sg %(sg)r"),
                       {"sg": sg})
@@ -750,8 +750,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             self.client.delete_rules_by_property(chain.get_id(),
                                                  OS_SG_RULE_KEY,
                                                  str(rule["id"]))
-            super(MidonetPluginV2,self).delete_security_group_rule(context,
-                                                                   sg_rule_id)
+            super(MidonetPluginV2, self).delete_security_group_rule(context,
+                                                                    sg_rule_id)
 
     def get_security_group_rules(self, context, filters=None, fields=None):
         LOG.debug(_("MidonetPluginV2.get_security_group_rules called: "

@@ -854,8 +854,7 @@ class MidoClient:
                               protocol=None, ethertype=None, **kwargs):
         """Create a new accept chain rule.
 
-        :param direction: Could be either 'inbound' or 'outbound'.  This from the
-                          view of the MidoNet port.
+        :param direction: Could be either 'inbound' or 'outbound'.
         :param pg_id: Port group ID
         :param addr: CIDR in the format x.x.x.x/y
         :param port_from: Start port number.  For ICMP, use this for type
@@ -903,10 +902,10 @@ class MidoClient:
                 nw_len).port_group_src(pg_id).tp_src(tp)
 
         if proto == 1:  # ICMP
-             # Overwrite port fields regardless of the direction
-             tp_src = {"start": port_from, "end": port_from}
-             tp_dst = {"start": port_to, "end": port_to}
-             rule = rule.tp_src(tp_src).tp_dst(tp_dst)
+            # Overwrite port fields regardless of the direction
+            tp_src = {"start": port_from, "end": port_from}
+            tp_dst = {"start": port_to, "end": port_to}
+            rule = rule.tp_src(tp_src).tp_dst(tp_dst)
 
         return rule.create()
 
