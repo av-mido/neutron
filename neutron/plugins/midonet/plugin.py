@@ -502,25 +502,27 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                     "interface_info=%(interface_info)r"),
                   {'router_id': router_id, 'interface_info': interface_info})
 
-        qport = super(MidonetPluginV2, self).add_router_interface(
-            context, router_id, interface_info)
+        with context.session.begin(subtransactions=True):
+            info = super(MidonetPluginV2, self).add_router_interface(
+                context, router_id, interface_info)
+            subnet = self._get_subnet(context, info["subnet_id"])
 
-        # TODO(tomoe): handle a case with 'port' in interface_info
-        if 'subnet_id' in interface_info:
-            subnet_id = interface_info['subnet_id']
-            subnet = self._get_subnet(context, subnet_id)
-
-            gateway_ip = subnet['gateway_ip']
-            network_address, length = subnet['cidr'].split('/')
-
-            # Link the router and the bridge port.
-            self.client.link_bridge_port_to_router(qport['port_id'], router_id,
-                                                   gateway_ip, network_address,
-                                                   length)
+        try:
+            # Link the router and the bridge
+            self.client.link_bridge_to_router(info["port_id"], router_id,
+                                              subnet["gateway_ip"],
+                                              subnet["cidr"])
+        except Exception:
+            LOG.error(_("Failed to create MidoNet resources to add router "
+                        "interface. info=%(info), router_id=%(router_id)"),
+                      {"info": info, "router_id": router_id})
+            with excutils.save_and_reraise_exception():
+                with context.session.begin(subtransactions=True):
+                    self.remove_router_interface(context, router_id, info)
 
         LOG.debug(_("MidonetPluginV2.add_router_interface exiting: "
-                    "qport=%r"), qport)
-        return qport
+                    "info=%r"), info)
+        return info
 
     def remove_router_interface(self, context, router_id, interface_info):
         """Remove interior router ports."""

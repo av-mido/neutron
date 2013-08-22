@@ -37,7 +37,7 @@ SNAT_RULE = 'SNAT'
 SNAT_RULE_PROPERTY = {OS_TENANT_ROUTER_RULE_KEY: SNAT_RULE}
 
 
-def _get_rule_addr(addr):
+def _net_addr(addr):
     nw_addr, nw_len = addr.split('/')
     nw_len = int(nw_len)
     return nw_addr, nw_len
@@ -376,24 +376,24 @@ class MidoClient:
         subnet.opt121_routes(routes).update()
 
     @handle_api_error
-    def link_bridge_port_to_router(self, port_id, router_id, gateway_ip,
-                                   net_addr, net_len):
-        """Link a tenant bridge port to the router
+    def link_bridge_to_router(self, port_id, router_id, gateway_ip, cidr):
+        """Link a bridge to the router
 
         :param port_id: port ID
         :param router_id: router id to link to
         :param gateway_ip: IP address of gateway
+        :param cidr: network CIDR 
         :param net_addr: network IP address
         :param net_len: network IP address length
         """
-        LOG.debug(_("MidoClient.link_bridge_port_to_router called: "
+        LOG.debug(_("MidoClient.link_bridge_to_router called: "
                     "port_id=%(port_id)s, router_id=%(router_id)s, "
-                    "gateway_ip=%(gateway_ip)s net_addr=%(net_addr)s, "
-                    "net_len=%(net_len)s"),
+                    "gateway_ip=%(gateway_ip)s cidr=%(cidr)s"),
                   {'port_id': port_id, 'router_id': router_id,
-                   'gateway_ip': gateway_ip, 'net_addr': net_addr,
-                   'net_len': net_len})
+                   'gateway_ip': gateway_ip, 'cidr': cidr})
+
         router = self.get_router(router_id)
+        net_addr, net_len = _net_addr(cidr)
 
         # create a port on the router
         in_port = router.add_port()
@@ -403,7 +403,7 @@ class MidoClient:
         br_port = self.get_port(port_id)
         router_port.link(br_port.get_id())
 
-        # add a route for the subnet in the provider router
+        # add a route for the subnet in the router
         router.add_route().type('Normal').src_network_addr(
             '0.0.0.0').src_network_length(0).dst_network_addr(
                 net_addr).dst_network_length(net_len).weight(
@@ -423,8 +423,12 @@ class MidoClient:
                   {'port_id': port_id, 'net_addr': net_addr,
                    'net_len': net_len})
         port = self.get_port(port_id)
-        port.unlink()
-        self.delete_port(port.get_peer_id())
+        if port.get_peer_id():
+            port.unlink()
+            self.delete_port(port.get_peer_id())
+        else:
+            LOG.warn(_("Attempted to unlink a port that was not linked. %s"),
+                     port.get_id())
         self.delete_port(port.get_id())
 
     @handle_api_error
@@ -882,7 +886,7 @@ class MidoClient:
 
         nw_addr = nw_len = None
         if addr:
-            nw_addr, nw_len = _get_rule_addr(addr)
+            nw_addr, nw_len = _net_addr(addr)
 
         if port_from < 0:
             port_from = None
