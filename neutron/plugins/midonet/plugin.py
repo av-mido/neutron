@@ -45,6 +45,32 @@ from neutron.plugins.midonet import midonet_lib
 LOG = logging.getLogger(__name__)
 
 
+METADATA_DEFAULT_IP = "169.254.169.254/32"
+OS_SG_RULE_KEY = 'os_sg_rule_id'
+SG_INGRESS_CHAIN_NAME = "OS_SG_%(id)s_%(name)s_INGRESS"
+SG_EGRESS_CHAIN_NAME = "OS_SG_%(id)s_%(name)s_EGRESS"
+SG_PORT_GROUP_NAME = "OS_PG_%(id)s_%(name)s"
+
+
+def sg_chain_names(sg):
+    ingress = SG_INGRESS_CHAIN_NAME % sg
+    egress = SG_EGRESS_CHAIN_NAME % sg
+    return {'ingress': ingress, 'egress': egress}
+
+
+def sg_port_group_name(sg):
+    return SG_PORT_GROUP_NAME % sg
+
+
+def _rule_direction(sg_direction):
+    if sg_direction == 'ingress':
+        return 'outbound'
+    elif sg_direction == 'egress':
+        return 'inbound'
+    else:
+        raise ValueError(_("Unrecognized direction %s"), sg_direction)
+
+
 def _is_vif_port(port):
     """Check whether the given port is a standard VIF port
 
@@ -62,14 +88,6 @@ def _is_dhcp_port(port):
     """
     device_owner = port['device_owner']
     return device_owner.startswith('network:dhcp')
-
-
-def _get_subnet_str(subnet):
-    """Get the subnet string in x.x.x.x_y format
-
-    :param subnet: subnet object to extract the subnet string from
-    """
-    return subnet['cidr'].replace("/", "_")
 
 
 def _check_resource_exists(func, id, name, raise_exc=False):
@@ -278,16 +296,19 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             if subnet["ip_version"] == 6:
                 # TODO handle IPv6
                 continue
-            subnet_str = _get_subnet_str(subnet)
-            yield subnet_str, fixed_ip["ip_address"], mac
+            yield subnet['cidr'], fixed_ip["ip_address"], mac
 
     def _metadata_subnets(self, context, port):
         for fixed_ip in port["fixed_ips"]:
             subnet = self._get_subnet(context, fixed_ip["subnet_id"])
             if subnet["ip_version"] == 6:
                 continue
-            subnet_str = _get_subnet_str(subnet)
-            yield subnet_str, fixed_ip["ip_address"]
+            yield subnet['cidr'], fixed_ip["ip_address"]
+
+    def _bind_port_to_sgs(self, context, port, sg_ids):
+        self._process_port_create_security_group(context, port, sg_ids)
+        # TODO
+        #self.client.bind_port_to_port_groups(port["id"], sg_ids)
 
     def create_port(self, context, port):
         """Create a L2 port in Neutron/MidoNet."""
@@ -309,9 +330,10 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 port_data.update(new_port)
 
                 # Bind security groups to the port
-                sg_ids = self._get_security_groups_on_port(context, port)
-                self._process_port_create_security_group(context, port_data,
-                                                         sg_ids)
+                port_data[ext_sg.SECURITYGROUPS] = (
+                    self._get_security_groups_on_port(context, port))
+                self._bind_port_to_sgs(context, port_data,
+                                       port_data[ext_sg.SECURITYGROUPS])
         except Exception as ex:
             # Try removing the MidoNet port before raising an exception.
             with excutils.save_and_reraise_exception():
@@ -323,13 +345,13 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         try:
             if _is_dhcp_port(port_data):
                 # For DHCP port, add a metadata route
-                for subnet, ip in self._metadata_subnets(context, port_data):
-                    self.client.add_metadata_dhcp_route_option(bridge, subnet,
-                                                               ip)
+                for cidr, ip in self._metadata_subnets(context, port_data):
+                    self.client.add_dhcp_route_option(bridge, cidr, ip,
+                                                      METADATA_DEFAULT_IP)
             elif _is_vif_port(port_data):
                 # DHCP mapping is only for VIF ports
-                for subnet, ip, mac in self._dhcp_mappings(context, port_data):
-                    self.client.add_dhcp_host(bridge, subnet, ip, mac)
+                for cidr, ip, mac in self._dhcp_mappings(context, port_data):
+                    self.client.add_dhcp_host(bridge, cidr, ip, mac)
         except Exception as ex:
             LOG.error(_("Failed to configure DHCP for port %(port)s, %(err)s"),
                       {"port": port_data["id"], "err": ex})
@@ -379,8 +401,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         port = self.get_port(context, id)
         self.client.delete_port(id)
         try:
-            for subnet, ip, mac in self._dhcp_mappings(context, port):
-                self.client.delete_dhcp_host(port["network_id"], subnet, ip,
+            for cidr, ip, mac in self._dhcp_mappings(context, port):
+                self.client.delete_dhcp_host(port["network_id"], cidr, ip,
                                              mac)
         except Exception:
             LOG.error(_("Failed to delete DHCP mapping for port %(id)s"),
@@ -388,17 +410,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         super(MidonetPluginV2, self).delete_port(context, id)
 
-    #
-    # L3 APIs.
-    #
-
     def create_router(self, context, router):
         LOG.debug(_("MidonetPluginV2.create_router called: router=%r"), router)
-
-        if router['router']['admin_state_up'] is False:
-            LOG.warning(_('Ignoring admin_state_up=False for router=%r.  '
-                          'Overriding with True'), router)
-            router['router']['admin_state_up'] = True
 
         tenant_id = self._get_tenant_id_for_create(context, router['router'])
         session = context.session
@@ -421,11 +434,6 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
     def update_router(self, context, id, router):
         LOG.debug(_("MidonetPluginV2.update_router called: id=%(id)s "
                     "router=%(router)r"), router)
-
-        if router['router'].get('admin_state_up') is False:
-            raise q_exc.NotImplementedError(_('admin_state_up=False '
-                                              'routers are not '
-                                              'supported.'))
 
         op_gateway_set = False
         op_gateway_clear = False
@@ -613,18 +621,29 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         sg = super(MidonetPluginV2, self).create_security_group(
             context, security_group, default_sg)
 
-        # Create the MidoNet side
         try:
-            self.client.create_for_sg(tenant_id, sg['id'], sg['name'])
+            # Process the MidoNet side
+            self.client.create_port_group(tenant_id, sg_port_group_name(sg))
+            chain_names = sg_chain_names(sg)
+            chains = {}
+            for direction, chain_name in chain_names.iteritems():
+                c = self.client.create_chain(tenant_id, chain_name)
+                chains[direction] = c
+
+            # Create all the rules for this SG.  Only accept rules are created
+            for r in sg['security_group_rules']:
+               self._create_accept_chain_rule(context, r, sg=sg,
+                                              chain=chains[r['direction']])
         except Exception:
-            LOG.error(_("Failed to create MidoNet resources for sg %(sg)s"),
-                      sg)
+            LOG.error(_("Failed to create MidoNet resources for sg %(sg)r"),
+                      {"sg": sg})
             with excutils.save_and_reraise_exception():
                 with context.session.begin(subtransactions=True):
+                    sg = self._get_security_group(context, sg["id"])
                     context.session.delete(sg)
 
         LOG.debug(_("MidonetPluginV2.create_security_group exiting: sg=%r"),
-                   sg)
+                  sg)
         return sg
 
     def delete_security_group(self, context, id):
@@ -632,29 +651,26 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         LOG.debug(_("MidonetPluginV2.delete_security_group called: id=%s"), id)
 
         with context.session.begin(subtransactions=True):
-            sg_db_entry = super(MidonetPluginV2, self).get_security_group(
-                context, id)
-
-            if not sg_db_entry:
+            sg = super(MidonetPluginV2, self).get_security_group(context, id)
+            if not sg:
                 raise ext_sg.SecurityGroupNotFound(id=id)
 
-            sg_name = sg_db_entry['name']
-            sg_id = sg_db_entry['id']
-            tenant_id = sg_db_entry['tenant_id']
-
-            if sg_name == 'default' and not context.is_admin:
+            if sg["name"] == 'default' and not context.is_admin:
                 raise ext_sg.SecurityGroupCannotRemoveDefault()
 
+            sg_id = sg['id']
             filters = {'security_group_id': [sg_id]}
             if super(MidonetPluginV2, self)._get_port_security_group_bindings(
                     context, filters):
                 raise ext_sg.SecurityGroupInUse(id=sg_id)
 
             # Delete MidoNet Chains and portgroup for the SG
-            self.client.delete_for_sg(tenant_id, sg_id, sg_name)
-
-            return super(MidonetPluginV2, self).delete_security_group(
-                context, id)
+            tenant_id = sg['tenant_id']
+            self.client.delete_chains_with_names(tenant_id, sg_chain_names(
+                                                 sg).values())
+            self.client.delete_port_group_with_name(tenant_id,
+                                                    sg_port_group_name(sg))
+            super(MidonetPluginV2, self).delete_security_group(context, id)
 
     def get_security_groups(self, context, filters=None, fields=None,
                             default_sg=False):
@@ -671,35 +687,71 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         return super(MidonetPluginV2, self).get_security_group(context, id,
                                                                fields)
 
+    def _create_accept_chain_rule(self, context, sg_rule, sg=None, chain=None):
+
+        if sg is None:
+            sg = self._get_security_group(context,
+                                          sg_rule["security_group_id"])
+
+        direction = sg_rule["direction"]
+        tenant_id = sg_rule["tenant_id"]
+        chain_name = sg_chain_names(sg)[direction]
+
+        if chain is None:
+            chain = self.client.get_chain_by_name(tenant_id, chain_name)
+
+        if chain.get_name() != chain_name:
+            raise ValueError(_("Chain %s and security group %s don't match"),
+                             (chain.get_id(), sg["id"]))
+
+        pg_id = None
+        if sg_rule["remote_group_id"] is not None:
+            pg_name = sg_port_group_name(sg)
+            pg = self.client.get_port_group_by_name(tenant_id, pg_name)
+            pg_id = pg.get_id()
+
+        props = {OS_SG_RULE_KEY: str(sg_rule["id"])}
+        return self.client.add_accept_chain_rule(
+            chain, _rule_direction(direction), pg_id,
+            sg_rule["remote_ip_prefix"], sg_rule["port_range_min"],
+            sg_rule["port_range_max"], sg_rule["protocol"],
+            sg_rule["ethertype"], **props)
+
     def create_security_group_rule(self, context, security_group_rule):
         LOG.debug(_("MidonetPluginV2.create_security_group_rule called: "
                     "security_group_rule=%(security_group_rule)r"),
                   {'security_group_rule': security_group_rule})
 
         with context.session.begin(subtransactions=True):
-            rule_db_entry = super(
-                MidonetPluginV2, self).create_security_group_rule(
-                    context, security_group_rule)
+            rule = super(MidonetPluginV2, self).create_security_group_rule(
+                context, security_group_rule)
 
-            self.client.create_for_sg_rule(rule_db_entry)
+            chain_rule = self._create_accept_chain_rule(context, rule)
+
             LOG.debug(_("MidonetPluginV2.create_security_group_rule exiting: "
-                        "rule_db_entry=%r"), rule_db_entry)
-            return rule_db_entry
+                        "rule=%r"), rule)
+            return rule
 
-    def delete_security_group_rule(self, context, sgrid):
+    def delete_security_group_rule(self, context, sg_rule_id):
         LOG.debug(_("MidonetPluginV2.delete_security_group_rule called: "
-                    "sgrid=%s"), sgrid)
-
+                    "sg_rule_id=%s"), sg_rule_id)
         with context.session.begin(subtransactions=True):
-            rule_db_entry = super(MidonetPluginV2,
-                                  self).get_security_group_rule(context, sgrid)
+            rule = super(MidonetPluginV2, self).get_security_group_rule(
+                context, sg_rule_id)
 
-            if not rule_db_entry:
-                raise ext_sg.SecurityGroupRuleNotFound(id=sgrid)
+            if not rule:
+                raise ext_sg.SecurityGroupRuleNotFound(id=sg_rule_id)
 
-            self.client.delete_for_sg_rule(rule_db_entry)
-            return super(MidonetPluginV2,
-                         self).delete_security_group_rule(context, sgrid)
+            sg = self._get_security_group(context,
+                                          rule["security_group_id"])
+            chain_name = sg_chain_names(sg)[rule["direction"]]
+            chain = self.client.get_chain_by_name(rule["tenant_id"],
+                                                  chain_name)
+            self.client.delete_rules_by_property(chain.get_id(),
+                                                 OS_SG_RULE_KEY,
+                                                 str(rule["id"]))
+            super(MidonetPluginV2,self).delete_security_group_rule(context,
+                                                                   sg_rule_id)
 
     def get_security_group_rules(self, context, filters=None, fields=None):
         LOG.debug(_("MidonetPluginV2.get_security_group_rules called: "

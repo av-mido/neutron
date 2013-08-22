@@ -33,22 +33,53 @@ NAME_IDENTIFIABLE_PREFIX_LEN = len(PREFIX) + 36  # 36 = length of uuid
 OS_FLOATING_IP_RULE_KEY = 'OS_FLOATING_IP'
 OS_ROUTER_IN_CHAIN_NAME_FORMAT = 'OS_ROUTER_IN_%s'
 OS_ROUTER_OUT_CHAIN_NAME_FORMAT = 'OS_ROUTER_OUT_%s'
-OS_SG_KEY = 'os_sg_rule_id'
 OS_TENANT_ROUTER_RULE_KEY = 'OS_TENANT_ROUTER_RULE'
 SNAT_RULE = 'SNAT'
 SNAT_RULE_PROPERTY = {OS_TENANT_ROUTER_RULE_KEY: SNAT_RULE}
 SUFFIX_IN = '_IN'
 SUFFIX_OUT = '_OUT'
-METADATA_DEFAULT_IP = '169.254.169.254'
+
+
+def _get_rule_addr(addr):
+    nw_addr, nw_len = addr.split('/')
+    nw_len = int(nw_len)
+    return nw_addr, nw_len
+
+
+def _get_protocol_value(protocol):
+    p = protocol.lower()
+    if p == 'tcp':
+        return 6
+    elif p == 'udp':
+        return 17
+    elif p == 'icmp':
+        return 1
+    else:
+        raise ValueError("Unsupported protocol: %s" % protocol)
+
+
+def _get_ethertype_value(ethertype):
+    e = ethertype.lower()
+    if e == 'ipv4':
+        return 0x0800
+    elif e == 'ipv6':
+        return 0x86DD
+    else:
+        raise ValueError("Unsupported ethertype: %s" % ethertype)
+
+
+def _subnet_str(cidr):
+    """Convert the cidr string to x.x.x.x_y format
+
+    :param cidr: CIDR in x.x.x.x/y format
+    """
+    return cidr.replace("/", "_")
 
 
 def sg_label(sg_id, sg_name):
     """Construct the security group ID used as chain identifier in MidoNet."""
     return PREFIX + str(sg_id) + '_' + sg_name
 
-
-def sg_rule_properties(os_sg_rule_id):
-    return {OS_SG_KEY: str(os_sg_rule_id)}
 
 port_group_name = sg_label
 
@@ -160,38 +191,36 @@ class MidoClient:
                 net_len).create()
 
     @handle_api_error
-    def add_dhcp_host(self, bridge, subnet_str, ip, mac):
+    def add_dhcp_host(self, bridge, cidr, ip, mac):
         """Add DHCP host entry
 
         :param bridge: bridge the DHCP is configured for
-        :param subnet_str: subnet represented as x.x.x.x_y
+        :param cidr: subnet represented as x.x.x.x/y
         :param ip: IP address
         :param mac: MAC address
         """
         LOG.debug(_("MidoClient.add_dhcp_host called: bridge=%(bridge)s, "
-                    "subnet=%(subnet)s, ip=%(ip)s, mac=%(mac)s"),
-                  {'bridge': bridge, 'subnet': subnet_str, 'ip': ip,
-                   'mac': mac})
-        subnet = bridge.get_dhcp_subnet(subnet_str)
+                    "cidr=%(cidr)s, ip=%(ip)s, mac=%(mac)s"),
+                  {'bridge': bridge, 'cidr': cidr, 'ip': ip, 'mac': mac})
+        subnet = bridge.get_dhcp_subnet(_subnet_str(cidr))
         if subnet is None:
             raise MidonetApiException(msg="Tried to add to non-existent DHCP")
 
         subnet.add_dhcp_host().ip_addr(ip).mac_addr(mac).create()
 
     @handle_api_error
-    def remove_dhcp_host(self, bridge, subnet_str, ip, mac):
+    def remove_dhcp_host(self, bridge, cidr, ip, mac):
         """Remove DHCP host entry
 
         :param bridge: bridge the DHCP is configured for
-        :param subnet_str: subnet represented as x.x.x.x_y
+        :param cidr: subnet represented as x.x.x.x/y
         :param ip: IP address
         :param mac: MAC address
         """
         LOG.debug(_("MidoClient.remove_dhcp_host called: bridge=%(bridge)s, "
-                    "subnet=%(subnet)s, ip=%(ip)s, mac=%(mac)s"),
-                  {'bridge': bridge, 'subnet': subnet_str, 'ip': ip,
-                   'mac': mac})
-        subnet = bridge.get_dhcp_subnet(subnet_str)
+                    "cidr=%(cidr)s, ip=%(ip)s, mac=%(mac)s"),
+                  {'bridge': bridge, 'cidr': cidr, 'ip': ip, 'mac': mac})
+        subnet = bridge.get_dhcp_subnet(_subnet_str(cidr))
         if subnet is None:
             LOG.warn(_("Tried to delete mapping from non-existent subnet"))
             return
@@ -203,21 +232,21 @@ class MidoClient:
                 dh.delete()
 
     @handle_api_error
-    def delete_dhcp_host(self, bridge_id, subnet_str, ip, mac):
+    def delete_dhcp_host(self, bridge_id, cidr, ip, mac):
         """Delete DHCP host entry
 
         :param bridge_id: id of the bridge of the DHCP
-        :param subnet_str: subnet represented as x.x.x.x_y
+        :param cidr: subnet represented as x.x.x.x/y
         :param ip: IP address
         :param mac: MAC address
         """
         LOG.debug(_("MidoClient.delete_dhcp_host called: "
-                    "bridge_id=%(bridge_id)s, subnet=%(subnet)s, ip=%(ip)s, "
+                    "bridge_id=%(bridge_id)s, cidr=%(cidr)s, ip=%(ip)s, "
                     "mac=%(mac)s"), {'bridge_id': bridge_id,
-                                     'subnet': subnet_str,
+                                     'cidr': cidr,
                                      'ip': ip, 'mac': mac})
         bridge = self.get_bridge(bridge_id)
-        self.remove_dhcp_host(bridge, subnet_str, ip, mac)
+        self.remove_dhcp_host(bridge, _subnet_str(cidr), ip, mac)
 
     @handle_api_error
     def delete_dhcp(self, bridge):
@@ -345,22 +374,24 @@ class MidoClient:
             raise MidonetResourceNotFound(resource_type='Router', id=id)
 
     @handle_api_error
-    def add_metadata_dhcp_route_option(self, bridge, subnet_str, ip):
-        """Add Option121 route to subnet for metadata service
+    def add_dhcp_route_option(self, bridge, cidr, gw_ip, dst_ip):
+        """Add Option121 route to subnet
 
         :param bridge: Bridge to add the option route to
-        :param subnet_str: subnet represented as x.x.x.x_y
-        :param ip: IP address of the next hop
+        :param cidr: subnet represented as x.x.x.x/y
+        :param gw_ip: IP address of the next hop
+        :param dst: IP address of the destination, in x.x.x.x/y format
         """
-        LOG.debug(_("MidoClient.add_metadata_dhcp_route_option called: "
-                    "bridge=%(bridge)s, subnet_str=%(subnet_str)s, ip=%(ip)s"),
-                  {"bridge": bridge, "subnet_str": subnet_str, "ip": ip})
-        subnet = bridge.get_dhcp_subnet(subnet_str)
+        LOG.debug(_("MidoClient.add_dhcp_route_option called: "
+                    "bridge=%(bridge)s, cidr=%(cidr)s, gw_ip=%(gw_ip)s"
+                    "dst=%(dst)s"),
+                  {"bridge": bridge, "cidr": cidr, "gw_ip": gw_ip, "dst": dst})
+        subnet = bridge.get_dhcp_subnet(_subnet_str(cidr))
         if subnet is None:
             raise MidonetApiException(msg="Tried to access non-existent DHCP")
-
-        routes = [{'destinationPrefix': METADATA_DEFAULT_IP,
-                   'destinationLength': 32, 'gatewayAddr': ip}]
+        prefix, length = dst.split("/")
+        routes = [{'destinationPrefix': prefix, 'destinationLength': length,
+                   'gatewayAddr': gw_ip}]
         subnet.opt121_routes(routes).update()
 
     @handle_api_error
@@ -750,180 +781,149 @@ class MidoClient:
                     break
 
     @handle_api_error
-    def create_for_sg(self, tenant_id, sg_id, sg_name):
-        """Create resources to represent a security group.
-
-        Creating a security group creates a pair of chains in MidoNet, one for
-        inbound and the other for outbound.
-        """
-        LOG.debug(_("MidoClient.create_for_sg called: "
-                    "tenant_id=%(tenant_id)s sg_id=%(sg_id)s "
-                    "sg_name=%(sg_name)s "),
-                  {'tenant_id': tenant_id, 'sg_id': sg_id, 'sg_name': sg_name})
-        cnames = chain_names(sg_id, sg_name)
-        self.mido_api.add_chain().tenant_id(tenant_id).name(
-            cnames['in']).create()
-        self.mido_api.add_chain().tenant_id(tenant_id).name(
-            cnames['out']).create()
-
-        pg_name = port_group_name(sg_id, sg_name)
-        self.mido_api.add_port_group().tenant_id(tenant_id).name(
-            pg_name).create()
+    def create_chain(self, tenant_id, name):
+        """Create a new chain"""
+        LOG.debug(_("MidoClient.create_chain called: tenant_id=%(tenant_id)s "
+                    " name=%(name)s"), {"tenant_id": tenant_id, "name": name})
+        return self.mido_api.add_chain().tenant_id(tenant_id).name(
+            name).create()
 
     @handle_api_error
-    def delete_for_sg(self, tenant_id, sg_id, sg_name):
-        """Delete a chain mapped to a security group.
-
-        Delete a SG means deleting all the chains (inbound and outbound)
-        associated with the SG in MidoNet.
+    def delete_chains_with_names(self, tenant_id, names):
+        """Delete chains matching the names given for a tenant
         """
-        LOG.debug(_("MidoClient.delete_for_sg called: "
-                    "tenant_id=%(tenant_id)s sg_id=%(sg_id)s "
-                    "sg_name=%(sg_name)s "),
-                  {'tenant_id': tenant_id, 'sg_id': sg_id, 'sg_name': sg_name})
-
-        cnames = chain_names(sg_id, sg_name)
+        LOG.debug(_("MidoClient.delete_chains_with_names called: "
+                    "tenant_id=%(tenant_id)s names=%(names)s "),
+                  {"tenant_id": tenant_id, "names": names})
         chains = self.mido_api.get_chains({'tenant_id': tenant_id})
         for c in chains:
-            if c.get_name() == cnames['in'] or c.get_name() == cnames['out']:
-                LOG.debug(_('MidoClient.delete_for_sg: deleting chain=%r'),
-                          c.get_id())
+            if c.get_name() in names:
+                LOG.debug(_("Deleting chain %(id)s"), {"id": c.get_id()})
                 self.mido_api.delete_chain(c.get_id())
 
-        pg_name = port_group_name(sg_id, sg_name)
+    @handle_api_error
+    def get_chain_by_name(self, tenant_id, name):
+        """Get the chain with the name."""
+        LOG.debug(_("MidoClient.get_chain_by_name called: "
+                    "tenant_id=%(tenant_id)s name=%(name)s "),
+                  {"tenant_id": tenant_id, "name": name})
+        for c in self.mido_api.get_chains({'tenant_id': tenant_id}):
+            LOG.debug("RYURYU: return chainname %s" % c.get_name())
+            if c.get_name() == name:
+                LOG.debug("RYURYU: MATCHED")
+                return c
+
+    @handle_api_error
+    def get_port_group_by_name(self, tenant_id, name):
+        """Get the port group with the name."""
+        LOG.debug(_("MidoClient.get_port_group_by_name called: "
+                    "tenant_id=%(tenant_id)s name=%(name)s "),
+                  {"tenant_id": tenant_id, "name": name})
+        for p in self.mido_api.get_port_groups({'tenant_id': tenant_id}):
+            if p.get_name() == name:
+                return p
+
+    @handle_api_error
+    def create_port_group(self, tenant_id, name):
+        """Create a port group
+
+        Create a new port group for a given name and ID.
+        """
+        LOG.debug(_("MidoClient.create_port_group called: "
+                    "tenant_id=%(tenant_id)s name=%(name)s"),
+                  {"tenant_id": tenant_id, "name": name})
+        self.mido_api.add_port_group().tenant_id(tenant_id).name(
+            name).create()
+
+    @handle_api_error
+    def delete_port_group_with_name(self, tenant_id, name):
+        """Delete port group matching the name given for a tenant
+        """
+        LOG.debug(_("MidoClient.delete_port_group_with_name called: "
+                    "tenant_id=%(tenant_id)s name=%(name)s "),
+                  {"tenant_id": tenant_id, "name": name})
         pgs = self.mido_api.get_port_groups({'tenant_id': tenant_id})
         for pg in pgs:
-            if pg.get_name() == pg_name:
-                LOG.debug(_("MidoClient.delete_for_sg: deleting pg=%r"),
-                          pg)
+            if pg.get_name() == name:
+                LOG.debug(_("Deleting pg %(id)s"), {"id": pg.get_id()})
                 self.mido_api.delete_port_group(pg.get_id())
 
     @handle_api_error
-    def get_sg_chains(self, tenant_id, sg_id):
-        """Get a list of chains mapped to a security group."""
-        LOG.debug(_("MidoClient.get_sg_chains called: "
-                    "tenant_id=%(tenant_id)s sg_id=%(sg_id)s"),
-                  {'tenant_id': tenant_id, 'sg_id': sg_id})
+    def add_accept_chain_rule(self, chain, direction='inbound', pg_id=None,
+                              addr=None, port_from=-1, port_to=-1,
+                              protocol=None, ethertype=None, **kwargs):
+        """Create a new accept chain rule.
 
-        cnames = chain_names(sg_id, sg_name='')
-        chain_name_prefix_for_id = cnames['in'][:NAME_IDENTIFIABLE_PREFIX_LEN]
-        chains = {}
+        :param direction: Could be either 'inbound' or 'outbound'.  This from the
+                          view of the MidoNet port.
+        :param pg_id: Port group ID
+        :param addr: CIDR in the format x.x.x.x/y
+        :param port_from: Start port number.  For ICMP, use this for type
+        :param port_to: End port number. For ICMP use this for code
+        :param protocol: Could be one of 'tcp', 'udp', or 'icmp'
+        :param ethertype: Could be one of 'ipv4', 'ipv6'
+        """
+        LOG.debug(_("MidoClient.create_rule called: chain=%(chain)s "
+                    "direction=%(direction)s, pg_id=%(pg_id)s, addr=%(addr)s, "
+                    "port_from=%(port_from)s, port_to=%(port_to)s, "
+                    "protocol=%(protocol)s, ethertype=%(ethertype)s"),
+                  {"chain": chain, "direction": direction, "pg_id": pg_id,
+                   "addr": addr, "port_from": port_from, "port_to": port_to,
+                   "protocol": protocol, "ethertype": ethertype})
 
-        for c in self.mido_api.get_chains({'tenant_id': tenant_id}):
-            if c.get_name().startswith(chain_name_prefix_for_id):
-                if c.get_name().endswith(SUFFIX_IN):
-                    chains['in'] = c
-                if c.get_name().endswith(SUFFIX_OUT):
-                    chains['out'] = c
-        assert 'in' in chains
-        assert 'out' in chains
-        return chains
+        if direction not in ["inbound", "outbound"]:
+            raise ValueError("Invalid direction provided: %s" % direction)
 
-    @handle_api_error
-    def get_port_groups_for_sg(self, tenant_id, sg_id):
-        LOG.debug(_("MidoClient.get_port_groups_for_sg called: "
-                    "tenant_id=%(tenant_id)s sg_id=%(sg_id)s"),
-                  {'tenant_id': tenant_id, 'sg_id': sg_id})
+        eth = None
+        if ethertype:
+            eth = _get_ethertype_value(ethertype)
 
-        pg_name_prefix = port_group_name(
-            sg_id, sg_name='')[:NAME_IDENTIFIABLE_PREFIX_LEN]
-        port_groups = self.mido_api.get_port_groups({'tenant_id': tenant_id})
-        for pg in port_groups:
-            if pg.get_name().startswith(pg_name_prefix):
-                LOG.debug(_(
-                    "MidoClient.get_port_groups_for_sg exiting: pg=%r"), pg)
-                return pg
-        return None
+        proto = None
+        if protocol:
+            proto = _get_protocol_value(protocol)
 
-    @handle_api_error
-    def create_for_sg_rule(self, rule):
-        LOG.debug(_("MidoClient.create_for_sg_rule called: rule=%r"), rule)
+        rule = chain.add_rule().type("accept").nw_proto(proto).dl_type(
+            eth).properties(kwargs)
 
-        direction = rule['direction']
-        protocol = rule['protocol']
-        port_range_max = rule['port_range_max']
-        rule_id = rule['id']
-        security_group_id = rule['security_group_id']
-        remote_group_id = rule['remote_group_id']
-        remote_ip_prefix = rule['remote_ip_prefix']  # watch out. not validated
-        tenant_id = rule['tenant_id']
-        port_range_min = rule['port_range_min']
+        nw_addr = nw_len = None
+        if addr:
+            nw_addr, nw_len = _get_rule_addr(addr)
 
-        # construct a corresponding rule
-        tp_src_start = tp_src_end = None
-        tp_dst_start = tp_dst_end = None
-        nw_src_address = None
-        nw_src_length = None
-        port_group_id = None
+        if port_from < 0:
+            port_from = None
+        if port_to < 0:
+            port_to = None
 
-        # handle source
-        if remote_ip_prefix is not None:
-            nw_src_address, nw_src_length = remote_ip_prefix.split('/')
-        elif remote_group_id is not None:  # security group as a source
-            source_pg = self.pg_manager.get_for_sg(tenant_id, remote_group_id)
-            port_group_id = source_pg.get_id()
+        tp = {"start": port_from, "end": port_to}
+        if direction == "inbound":
+            rule = rule.nw_dst_address(nw_addr).nw_dst_length(
+                nw_len).port_group_dst(pg_id).tp_dst(tp)
         else:
-            raise Exception(_("Don't know what to do with rule=%r"), rule)
+            rule = rule.nw_src_address(nw_addr).nw_src_length(
+                nw_len).port_group_src(pg_id).tp_src(tp)
 
-        # dst ports
-        tp_dst_start, tp_dst_end = port_range_min, port_range_max
+        if proto == 1:  # ICMP
+             # Overwrite port fields regardless of the direction
+             tp_src = {"start": port_from, "end": port_from}
+             tp_dst = {"start": port_to, "end": port_to}
+             rule = rule.tp_src(tp_src).tp_dst(tp_dst)
 
-        # protocol
-        if protocol == 'tcp':
-            nw_proto = 6
-        elif protocol == 'udp':
-            nw_proto = 17
-        elif protocol == 'icmp':
-            nw_proto = 1
-            # extract type and code from reporposed fields
-            icmp_type = rule['from_port']
-            icmp_code = rule['to_port']
-
-            # translate -1(wildcard in OS) to midonet wildcard
-            if icmp_type == -1:
-                icmp_type = None
-            if icmp_code == -1:
-                icmp_code = None
-
-            # set data for midonet rule
-            tp_src_start = tp_src_end = icmp_type
-            tp_dst_start = tp_dst_end = icmp_code
-
-        chains = self.get_sg_chains(tenant_id, security_group_id)
-        chain = None
-        if direction == 'egress':
-            chain = chains['in']
-        elif direction == 'ingress':
-            chain = chains['out']
-        else:
-            raise Exception(_("Don't know what to do with rule=%r"), rule)
-
-        # create an accept rule
-        properties = sg_rule_properties(rule_id)
-        LOG.debug(_("MidoClient.create_for_sg_rule: adding accept rule "
-                    "%(rule_id)s in portgroup %(port_group_id)s"),
-                  {'rule_id': rule_id, 'port_group_id': port_group_id})
-        chain.add_rule().port_group(port_group_id).type('accept').nw_proto(
-            nw_proto).nw_src_address(nw_src_address).nw_src_length(
-                nw_src_length).tp_src_start(tp_src_start).tp_src_end(
-                    tp_src_end).tp_dst_start(tp_dst_start).tp_dst_end(
-                        tp_dst_end).properties(properties).create()
+        return rule.create()
 
     @handle_api_error
-    def delete_for_sg_rule(self, rule):
-        LOG.debug(_("MidoClient.delete_for_sg_rule called: rule=%r"), rule)
+    def delete_rules_by_property(self, chain_id, key, value):
+        LOG.debug(_("MidoClient.delete_rules_by_property called: "
+                    "chain_id=%(chain_id)s, key=%(key)s, value=%(value)s"),
+                  {"chain_id": chain_id, "key": key, "value": value})
 
-        tenant_id = rule['tenant_id']
-        security_group_id = rule['security_group_id']
-        rule_id = rule['id']
+        chain = self.mido_api.get_chain(chain_id)
+        if chain is None:
+            raise MidonetResourceNotFound(resource_type='Chain', id=chain_id)
 
-        properties = sg_rule_properties(rule_id)
-        # search for the chains to find the rule to delete
-        chains = self.get_sg_chains(tenant_id, security_group_id)
-        for c in chains['in'], chains['out']:
-            rules = c.get_rules()
-            for r in rules:
-                if r.get_properties() == properties:
-                    LOG.debug(_("MidoClient.delete_for_sg_rule: deleting "
-                                "rule %r"), r)
-                    self.mido_api.delete_rule(r.get_id())
+        for r in chain.get_rules():
+            props = r.get_properties()
+            if not props or key not in props:
+                continue
+
+            if props[key] == value:
+                self.mido_api.delete_rule(r.get_id())
