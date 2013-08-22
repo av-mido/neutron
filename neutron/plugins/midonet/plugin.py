@@ -47,19 +47,19 @@ LOG = logging.getLogger(__name__)
 
 METADATA_DEFAULT_IP = "169.254.169.254/32"
 OS_SG_RULE_KEY = 'os_sg_rule_id'
-SG_INGRESS_CHAIN_NAME = "OS_SG_%(id)s_%(name)s_INGRESS"
-SG_EGRESS_CHAIN_NAME = "OS_SG_%(id)s_%(name)s_EGRESS"
-SG_PORT_GROUP_NAME = "OS_PG_%(id)s_%(name)s"
+SG_INGRESS_CHAIN_NAME = "OS_SG_%s_INGRESS"
+SG_EGRESS_CHAIN_NAME = "OS_SG_%s_EGRESS"
+SG_PORT_GROUP_NAME = "OS_PG_%s"
 
 
-def sg_chain_names(sg):
-    ingress = SG_INGRESS_CHAIN_NAME % sg
-    egress = SG_EGRESS_CHAIN_NAME % sg
+def sg_chain_names(sg_id):
+    ingress = SG_INGRESS_CHAIN_NAME % sg_id
+    egress = SG_EGRESS_CHAIN_NAME % sg_id
     return {'ingress': ingress, 'egress': egress}
 
 
-def sg_port_group_name(sg):
-    return SG_PORT_GROUP_NAME % sg
+def sg_port_group_name(sg_id):
+    return SG_PORT_GROUP_NAME % sg_id
 
 
 def _rule_direction(sg_direction):
@@ -231,7 +231,6 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         """
         LOG.debug(_('MidonetPluginV2.create_network called: network=%r'),
                   network)
-
         tenant_id = self._get_tenant_id_for_create(context, network['network'])
         self._ensure_default_security_group(context, tenant_id)
 
@@ -271,7 +270,6 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         """
         LOG.debug(_("MidonetPluginV2.get_network called: id=%(id)r, "
                     "fields=%(fields)r"), {'id': id, 'fields': fields})
-
         qnet = super(MidonetPluginV2, self).get_network(context, id, fields)
         self.client.get_bridge(id)
 
@@ -307,8 +305,10 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
     def _bind_port_to_sgs(self, context, port, sg_ids):
         self._process_port_create_security_group(context, port, sg_ids)
-        # TODO
-        #self.client.bind_port_to_port_groups(port["id"], sg_ids)
+        for sg_id in sg_ids:
+            pg_name = sg_port_group_name(sg_id)
+            self.client.add_port_to_port_group_by_name(port["tenant_id"],
+                                                       pg_name, port["id"])
 
     def create_port(self, context, port):
         """Create a L2 port in Neutron/MidoNet."""
@@ -332,8 +332,9 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 # Bind security groups to the port
                 port_data[ext_sg.SECURITYGROUPS] = (
                     self._get_security_groups_on_port(context, port))
-                self._bind_port_to_sgs(context, port_data,
-                                       port_data[ext_sg.SECURITYGROUPS])
+                if port_data[ext_sg.SECURITYGROUPS]:
+                    self._bind_port_to_sgs(context, port_data,
+                                           port_data[ext_sg.SECURITYGROUPS])
         except Exception as ex:
             # Try removing the MidoNet port before raising an exception.
             with excutils.save_and_reraise_exception():
@@ -623,8 +624,9 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         try:
             # Process the MidoNet side
-            self.client.create_port_group(tenant_id, sg_port_group_name(sg))
-            chain_names = sg_chain_names(sg)
+            self.client.create_port_group(tenant_id,
+                                          sg_port_group_name(sg["id"]))
+            chain_names = sg_chain_names(sg["id"])
             chains = {}
             for direction, chain_name in chain_names.iteritems():
                 c = self.client.create_chain(tenant_id, chain_name)
@@ -632,7 +634,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
             # Create all the rules for this SG.  Only accept rules are created
             for r in sg['security_group_rules']:
-                self._create_accept_chain_rule(context, r, sg=sg,
+                self._create_accept_chain_rule(context, r,
                                                chain=chains[r['direction']])
         except Exception:
             LOG.error(_("Failed to create MidoNet resources for sg %(sg)r"),
@@ -666,10 +668,11 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
             # Delete MidoNet Chains and portgroup for the SG
             tenant_id = sg['tenant_id']
-            self.client.delete_chains_with_names(tenant_id, sg_chain_names(
-                                                 sg).values())
-            self.client.delete_port_group_with_name(tenant_id,
-                                                    sg_port_group_name(sg))
+            self.client.delete_chains_by_names(
+                tenant_id, sg_chain_names(sg["id"]).values())
+
+            self.client.delete_port_group_by_name(tenant_id,
+                                                  sg_port_group_name(sg["id"]))
             super(MidonetPluginV2, self).delete_security_group(context, id)
 
     def get_security_groups(self, context, filters=None, fields=None,
@@ -687,26 +690,19 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         return super(MidonetPluginV2, self).get_security_group(context, id,
                                                                fields)
 
-    def _create_accept_chain_rule(self, context, sg_rule, sg=None, chain=None):
-
-        if sg is None:
-            sg = self._get_security_group(context,
-                                          sg_rule["security_group_id"])
+    def _create_accept_chain_rule(self, context, sg_rule, chain=None):
 
         direction = sg_rule["direction"]
         tenant_id = sg_rule["tenant_id"]
-        chain_name = sg_chain_names(sg)[direction]
+        sg_id = sg_rule["security_group_id"]
+        chain_name = sg_chain_names(sg_id)[direction]
 
         if chain is None:
             chain = self.client.get_chain_by_name(tenant_id, chain_name)
 
-        if chain.get_name() != chain_name:
-            raise ValueError(_("Chain %s and security group %s don't match"),
-                             (chain.get_id(), sg["id"]))
-
         pg_id = None
         if sg_rule["remote_group_id"] is not None:
-            pg_name = sg_port_group_name(sg)
+            pg_name = sg_port_group_name(sg_id)
             pg = self.client.get_port_group_by_name(tenant_id, pg_name)
             pg_id = pg.get_id()
 
@@ -718,6 +714,11 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             sg_rule["ethertype"], **props)
 
     def create_security_group_rule(self, context, security_group_rule):
+        """Create a security group rule
+
+        Create a security group rule in the Neutron DB and corresponding
+        MidoNet resources in its data store.
+        """
         LOG.debug(_("MidonetPluginV2.create_security_group_rule called: "
                     "security_group_rule=%(security_group_rule)r"),
                   {'security_group_rule': security_group_rule})
@@ -733,6 +734,11 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             return rule
 
     def delete_security_group_rule(self, context, sg_rule_id):
+        """Delete a security group rule
+
+        Delete a security group rule from the Neutron DB and corresponding
+        MidoNet resources from its data store.
+        """
         LOG.debug(_("MidonetPluginV2.delete_security_group_rule called: "
                     "sg_rule_id=%s"), sg_rule_id)
         with context.session.begin(subtransactions=True):
@@ -752,17 +758,3 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                                                  str(rule["id"]))
             super(MidonetPluginV2, self).delete_security_group_rule(context,
                                                                     sg_rule_id)
-
-    def get_security_group_rules(self, context, filters=None, fields=None):
-        LOG.debug(_("MidonetPluginV2.get_security_group_rules called: "
-                    "filters=%(filters)r fields=%(fields)r"),
-                  {'filters': filters, 'fields': fields})
-        return super(MidonetPluginV2, self).get_security_group_rules(
-            context, filters, fields)
-
-    def get_security_group_rule(self, context, id, fields=None):
-        LOG.debug(_("MidonetPluginV2.get_security_group_rule called: "
-                    "id=%(id)s fields=%(fields)r"),
-                  {'id': id, 'fields': fields})
-        return super(MidonetPluginV2, self).get_security_group_rule(
-            context, id, fields)
