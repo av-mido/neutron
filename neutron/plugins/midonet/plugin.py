@@ -288,17 +288,16 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                       'had been deleted'), id)
             raise
 
-    def _dhcp_mappings(self, context, port):
-        mac = port["mac_address"]
-        for fixed_ip in port["fixed_ips"]:
+    def _dhcp_mappings(self, context, fixed_ips, mac):
+        for fixed_ip in fixed_ips:
             subnet = self._get_subnet(context, fixed_ip["subnet_id"])
             if subnet["ip_version"] == 6:
                 # TODO handle IPv6
                 continue
             yield subnet['cidr'], fixed_ip["ip_address"], mac
 
-    def _metadata_subnets(self, context, port):
-        for fixed_ip in port["fixed_ips"]:
+    def _metadata_subnets(self, context, fixed_ips):
+        for fixed_ip in fixed_ips:
             subnet = self._get_subnet(context, fixed_ip["subnet_id"])
             if subnet["ip_version"] == 6:
                 continue
@@ -310,6 +309,10 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             pg_name = sg_port_group_name(sg_id)
             self.client.add_port_to_port_group_by_name(port["tenant_id"],
                                                        pg_name, port["id"])
+
+    def _unbind_port_from_sgs(self, context, port_id):
+        self._delete_port_security_group_bindings(context, port_id)
+        self.client.remove_port_from_port_groups(port_id)
 
     def create_port(self, context, port):
         """Create a L2 port in Neutron/MidoNet."""
@@ -347,12 +350,15 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         try:
             if _is_dhcp_port(port_data):
                 # For DHCP port, add a metadata route
-                for cidr, ip in self._metadata_subnets(context, port_data):
+                for cidr, ip in self._metadata_subnets(context,
+                                                       port_data["fixed_ips"]):
                     self.client.add_dhcp_route_option(bridge, cidr, ip,
                                                       METADATA_DEFAULT_IP)
             elif _is_vif_port(port_data):
                 # DHCP mapping is only for VIF ports
-                for cidr, ip, mac in self._dhcp_mappings(context, port_data):
+                for cidr, ip, mac in self._dhcp_mappings(
+                        context, port_data["fixed_ips"],
+                        port_data["mac_address"]):
                     self.client.add_dhcp_host(bridge, cidr, ip, mac)
         except Exception as ex:
             LOG.error(_("Failed to configure DHCP for port %(port)s, %(err)s"),
@@ -403,7 +409,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         port = self.get_port(context, id)
         self.client.delete_port(id)
         try:
-            for cidr, ip, mac in self._dhcp_mappings(context, port):
+            for cidr, ip, mac in self._dhcp_mappings(
+                    context, port["fixed_ips"], port["mac_address"]):
                 self.client.delete_dhcp_host(port["network_id"], cidr, ip,
                                              mac)
         except Exception:
@@ -411,6 +418,40 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                       {"id": id})
 
         super(MidonetPluginV2, self).delete_port(context, id)
+
+    def update_port(self, context, id, port):
+        """Update port
+        """
+        with context.session.begin(subtransactions=True):
+
+            # Get the port and save the fixed IPs
+            old_port = super(MidonetPluginV2, self).get_port(context, id)
+            net_id = old_port["network_id"]
+            mac = old_port["mac_address"]
+            old_fixed_ips = None
+            if "fixed_ips" in old_port:
+                old_fixed_ips = old_port["fixed_ips"]
+
+            # update the port DB
+            p = super(MidonetPluginV2, self).update_port(context, id, port)
+
+            if "fixed_ips" in p:
+                # IPs have changed.  Re-map the DHCP entries
+                bridge = self.client.get_bridge(net_id)
+                for cidr, ip, mac in self._dhcp_mappings(
+                        context, old_fixed_ips, mac):
+                    self.client.remove_dhcp_host(bridge, cidr, ip, mac)
+                for cidr, ip, mac in self._dhcp_mappings(context,
+                                                         p["fixed_ips"], mac):
+                    self.client.add_dhcp_host(bridge, cidr, ip, mac)
+
+            if (self._check_update_deletes_security_groups(port) or
+                    self._check_update_has_security_groups(port)):
+                self._unbind_port_from_sgs(context, p["id"])
+                sg_ids = self._get_security_groups_on_port(context, port)
+                if sg_ids:
+                    self._bind_port_to_sgs(context, p, sg_ids)
+        return p
 
     def create_router(self, context, router):
         LOG.debug(_("MidonetPluginV2.create_router called: router=%r"), router)

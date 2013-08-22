@@ -846,6 +846,16 @@ class MidoClient:
         return pg
 
     @handle_api_error
+    def remove_port_from_port_groups(self, port_id):
+        """Remove a port binding from all the port groups
+        """
+        LOG.debug(_("MidoClient.remove_port_from_port_groups called: "
+                    "port_id=%(port_id)s"), {"port_id": port_id})
+        port = self.get_port(port_id)
+        for pg in port.get_port_groups():
+            pg.delete()
+
+    @handle_api_error
     def add_accept_chain_rule(self, chain, direction='inbound', pg_id=None,
                               addr=None, port_from=-1, port_to=-1,
                               protocol=None, ethertype=None, **kwargs):
