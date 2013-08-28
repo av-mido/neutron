@@ -45,7 +45,6 @@ from neutron.plugins.midonet import midonet_lib
 
 LOG = logging.getLogger(__name__)
 
-
 METADATA_DEFAULT_IP = "169.254.169.254/32"
 OS_FLOATING_IP_RULE_KEY = 'OS_FLOATING_IP'
 OS_SG_RULE_KEY = 'OS_SG_RULE_ID'
