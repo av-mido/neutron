@@ -217,7 +217,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
     def _get_provider_router(self):
         if not hasattr(self, 'provider_router'):
-            self.provider_router = self.client.get_router(self.provider_router_id)
+            self.provider_router = self.client.get_router(
+                self.provider_router_id)
 
     def _dhcp_mappings(self, context, fixed_ips, mac):
         for fixed_ip in fixed_ips:
@@ -761,8 +762,18 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             # Link the router and the bridge
             router = self.client.get_router(router_id)
             cidr = subnet["cidr"]
-            router_port = self.client.link_bridge_to_router(
-                info["port_id"], router, subnet["gateway_ip"], cidr)
+            net_addr, net_len = net_util.net_addr(cidr)
+            router_port = self.client.add_router_port(
+                router, port_address=subnet["gateway_ip"],
+                network_address=net_addr, network_length=net_len)
+            self.client.link(router_port, info["port_id"])
+            self.client.add_router_route(router, type='Normal',
+                                         src_network_addr='0.0.0.0',
+                                         src_network_length=0,
+                                         dst_network_addr=net_addr,
+                                         dst_network_length=net_len,
+                                         next_hop_port=router_port.get_id(),
+                                         weight=100)
 
             # Add a route for the metadata server. Not all VM images
             # supports DHCP option 121
@@ -807,12 +818,13 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         # The resaon is that we want to unlink first before deleting it.
         info = super(MidonetPluginV2, self).remove_router_interface(
             context, router_id, interface_info)
-
         port_id = info["port_id"]
 
-        # Unlink and remove the peer
-        router = self.client.get_router(router_id)
-        self.client.unlink_bridge_from_router(router, port_id)
+        # Remove the routes to the port and unlink the port
+        port = self.client.get_port(port_id)
+        routes = self.client.get_router_routes(router_id)
+        self.client.delete_port_routes(routes, port.get_peer_id())
+        self.client.unlink(port)
 
         # Remove the port.  Make sure that this port is no longer considered
         # a router interface port.
@@ -839,8 +851,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
                 # Add a route for the floating IP on the provider router.
                 router = self.client.get_router(fip["router_id"])
-                link_port = self.client.get_link_port(self._get_provider_router(),
-                                                      router.get_id())
+                link_port = self.client.get_link_port(
+                    self._get_provider_router(), router.get_id())
                 self.client.add_router_route(
                     self._get_provider_router(),
                     src_network_addr='0.0.0.0',

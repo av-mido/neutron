@@ -304,67 +304,42 @@ class MidoClient:
         subnet.opt121_routes(routes).update()
 
     @handle_api_error
-    def link_bridge_to_router(self, port_id, router, gateway_ip, cidr):
-        """Link a bridge to the router
-
-        :param port_id: port ID
-        :param router: router to link to
-        :param gateway_ip: IP address of gateway
-        :param cidr: network CIDR
-        """
-        LOG.debug(_("MidoClient.link_bridge_to_router called: "
-                    "port_id=%(port_id)s, router=%(router)s, "
-                    "gateway_ip=%(gateway_ip)s cidr=%(cidr)s"),
-                  {'port_id': port_id, 'router': router,
-                   'gateway_ip': gateway_ip, 'cidr': cidr})
-
-        net_addr, net_len = net_util.net_addr(cidr)
-
-        # create a port on the router
-        in_port = router.add_port()
-        router_port = in_port.port_address(gateway_ip).network_address(
-            net_addr).network_length(net_len).create()
-
-        br_port = self.get_port(port_id)
-        router_port.link(br_port.get_id())
-
-        # add a route for the subnet in the router
-        self.mido_api.add_router_route(router, type='Normal',
-                                       src_network_addr='0.0.0.0',
-                                       src_network_length=0,
-                                       dst_network_addr=net_addr,
-                                       dst_network_length=net_len,
-                                       next_hop_port=router_port.get_id(),
-                                       weight=100)
-        return router_port
+    def add_router_port(self, router, port_address=None,
+                        network_address=None, network_length=None):
+        """Add a new port to an existing router."""
+        return self.mido_api.add_router_port(router,
+                                             port_address=port_address,
+                                             network_address=network_address,
+                                             network_length=network_length)
 
     @handle_api_error
-    def unlink_bridge_from_router(self, router, port_id):
-        """Unlink a bridge port from the router.
+    def link(self, port, peer_id):
+        """Link a port to a given peerId."""
+        self.mido_api.link(port, peer_id)
 
-        :param port_id: port ID
+
+    @handle_api_error
+    def delete_port_routes(self, routes, port_id):
+        """Remove routes whose next hop port is the given port ID."""
+        for route in routes:
+            if route.get_next_hop_port() == port_id:
+                self.mido_api.delete_route(route.get_id())
+
+    @handle_api_error
+    def get_router_routes(self, router_id):
+        """Get all routes for the given router."""
+        return self.mido_api.get_router_routes(router_id)
+
+    @handle_api_error
+    def unlink(self, port):
+        """Unlink a port
+
+        :param port: port object
         """
-        LOG.debug(_("MidoClient.unlink_bridge_from_router called: "
-                    "port_id=%(port_id)s"), {'port_id': port_id})
-        port = self.get_port(port_id)
-        if port is None:
-            raise MidonetResourceNotFound(resource_type='Port', id=port_id)
-
-        # Delete the route for the subnet and for the MD server.
-        # They will both have the same next hop port
-        n_deleted_routes = 0
-        for r in router.get_routes():
-            if r.get_next_hop_port() == port.get_peer_id():
-                r.delete()
-                n_deleted_routes += 1
-                #break # commented out due to issue#314
-        # there may be other routes using the same next hot port
-        assert n_deleted_routes >= 2
-
+        LOG.debug(_("MidoClient.unlink called: port=%(port)s"),
+                  {'port': port})
         if port.get_peer_id():
-            peer_id = port.get_peer_id()
-            port.unlink()
-            self.delete_port(peer_id)
+            self.mido_api.unlink(port)
         else:
             LOG.warn(_("Attempted to unlink a port that was not linked. %s"),
                      port.get_id())
