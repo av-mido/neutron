@@ -40,7 +40,7 @@ from neutron.openstack.common import excutils
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import rpc
 from neutron.plugins.midonet.common import net_util
-from neutron.plugins.midonet import config  # noqa
+from neutron.plugins.midonet.common import config  # noqa
 from neutron.plugins.midonet import midonet_lib
 
 LOG = logging.getLogger(__name__)
@@ -206,7 +206,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         self.client = midonet_lib.MidoClient(self.mido_api)
 
         # self.provider_router_id should have been set.
-        if not hasattr(self, 'provider_router_id'):
+        if self.provider_router_id is None:
             msg = _('provider_router_id should be configured in the plugin '
                     'config file')
             LOG.exception(msg)
@@ -741,60 +741,73 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         super(MidonetPluginV2, self).delete_router(context, id)
 
+    def _link_bridge_to_router(self, router, bridge_port_id, net_addr, net_len,
+                               gw_ip, metadata_gw_ip):
+        router_port = self.client.add_router_port(
+            router, port_address=gw_ip, network_address=net_addr,
+            network_length=net_len)
+        self.client.link(router_port, bridge_port_id)
+        self.client.add_router_route(router, type='Normal',
+                                     src_network_addr='0.0.0.0',
+                                     src_network_length=0,
+                                     dst_network_addr=net_addr,
+                                     dst_network_length=net_len,
+                                     next_hop_port=router_port.get_id(),
+                                     weight=100)
+
+        if metadata_gw_ip:
+            # Add a route for the metadata server.
+            # Not all VM images supports DHCP option 121.  Add a route for the
+            # Metadata server in the router to forward the packet to the bridge
+            # that will send them to the Metadata Proxy.
+            self.client.add_router_route(
+                router, type='Normal', src_network_addr=net_addr,
+                src_network_length=net_len,
+                dst_network_addr=METADATA_DEFAULT_IP,
+                dst_network_length=32,
+                next_hop_port=router_port.get_id(),
+                next_hop_gateway=metadata_gw_ip)
+
+    def _unlink_bridge_from_router(self, router_id, bridge_port_id):
+        """Unlink a bridge from a router."""
+
+        # Remove the routes to the port and unlink the port
+        bridge_port = self.client.get_port(bridge_port_id)
+        routes = self.client.get_router_routes(router_id)
+        self.client.delete_port_routes(routes, bridge_port.get_peer_id())
+        self.client.unlink(bridge_port)
+
     def add_router_interface(self, context, router_id, interface_info):
         """Handle router linking with network."""
         LOG.debug(_("MidonetPluginV2.add_router_interface called: "
                     "router_id=%(router_id)s "
                     "interface_info=%(interface_info)r"),
                   {'router_id': router_id, 'interface_info': interface_info})
-
-        with context.session.begin(subtransactions=True):
-            info = super(MidonetPluginV2, self).add_router_interface(
-                context, router_id, interface_info)
-            subnet = self._get_subnet(context, info["subnet_id"])
-
         try:
-            rport_qry = context.session.query(models_v2.Port)
-            dhcp_ports = rport_qry.filter_by(
-                network_id=subnet.network_id,
-                device_owner='network:dhcp').all()
-
-            # Link the router and the bridge
-            router = self.client.get_router(router_id)
-            cidr = subnet["cidr"]
-            net_addr, net_len = net_util.net_addr(cidr)
-            router_port = self.client.add_router_port(
-                router, port_address=subnet["gateway_ip"],
-                network_address=net_addr, network_length=net_len)
-            self.client.link(router_port, info["port_id"])
-            self.client.add_router_route(router, type='Normal',
-                                         src_network_addr='0.0.0.0',
-                                         src_network_length=0,
-                                         dst_network_addr=net_addr,
-                                         dst_network_length=net_len,
-                                         next_hop_port=router_port.get_id(),
-                                         weight=100)
-
-            # Add a route for the metadata server. Not all VM images
-            # supports DHCP option 121
-            # Add a route for the Metadata server in the router to forward
-            # the packets to the bridge that will send them to the
-            # Metadata Proxy. Since we don't support multiple subnets
-            # it's ok to take the first fixed_ip
-            if dhcp_ports and dhcp_ports[0].fixed_ips:
+            with context.session.begin(subtransactions=True):
+                info = super(MidonetPluginV2, self).add_router_interface(
+                    context, router_id, interface_info)
+                subnet = self._get_subnet(context, info["subnet_id"])
+                cidr = subnet["cidr"]
                 net_addr, net_len = net_util.net_addr(cidr)
-                gw_ip = dhcp_ports[0].fixed_ips[0].ip_address
-                self.client.add_router_route(
-                    router, type='Normal', src_network_addr=net_addr,
-                    src_network_length=net_len,
-                    dst_network_addr=METADATA_DEFAULT_IP,
-                    dst_network_length=32,
-                    next_hop_port=router_port.get_id(),
-                    next_hop_gateway=gw_ip)
-            else:
-                LOG.warn(_("DHCP agent is not working correctly. No port to "
-                           "reach the Metadata server on this network"))
+                router = self.client.get_router(router_id)
 
+                # Get the metadatat GW IP
+                metadata_gw_ip = None
+                rport_qry = context.session.query(models_v2.Port)
+                dhcp_ports = rport_qry.filter_by(
+                    network_id=subnet["network_id"],
+                    device_owner='network:dhcp').all()
+                if dhcp_ports and dhcp_ports[0].fixed_ips:
+                    metadata_gw_ip = dhcp_ports[0].fixed_ips[0].ip_address
+                else:
+                    LOG.warn(_("DHCP agent is not working correctly. No port "
+                               "to reach the Metadata server on this network"))
+
+                # Link the router and the bridge
+                self._link_bridge_to_router(router, info["port_id"], net_addr,
+                                            net_len, subnet["gateway_ip"],
+                                            metadata_gw_ip)
         except Exception:
             LOG.error(_("Failed to create MidoNet resources to add router "
                         "interface. info=%(info)s, router_id=%(router_id)s"),
@@ -820,11 +833,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             context, router_id, interface_info)
         port_id = info["port_id"]
 
-        # Remove the routes to the port and unlink the port
-        port = self.client.get_port(port_id)
-        routes = self.client.get_router_routes(router_id)
-        self.client.delete_port_routes(routes, port.get_peer_id())
-        self.client.unlink(port)
+        # Unlink the bridge from router
+        self._unlink_bridge_from_router(router_id, port_id)
 
         # Remove the port.  Make sure that this port is no longer considered
         # a router interface port.
