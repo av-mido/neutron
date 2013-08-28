@@ -22,54 +22,11 @@
 
 from webob import exc as w_exc
 
-from neutron.common import constants as n_cost
 from neutron.common import exceptions as n_exc
 from neutron.openstack.common import log as logging
-
+from neutron.plugins.midonet.common import net_util
 
 LOG = logging.getLogger(__name__)
-METADATA_DEFAULT_IP = "169.254.169.254"
-
-
-def _net_addr(addr):
-    """Get network address prefix and length from a given address."""
-    nw_addr, nw_len = addr.split('/')
-    nw_len = int(nw_len)
-    return nw_addr, nw_len
-
-
-def _get_protocol_value(protocol):
-    """Convert string representation of protocol to the numerical."""
-    p = protocol.lower()
-    if p == 'tcp':
-        return n_cost.TCP_PROTOCOL
-    elif p == 'udp':
-        return n_cost.UDP_PROTOCOL
-    elif p == 'icmp':
-        return n_cost.ICMP_PROTOCOL
-    else:
-        raise ValueError(_("Unsupported protocol: %s") % protocol)
-
-
-def _get_ethertype_value(ethertype):
-    """Connvert string representation of ethertype to the numerical."""
-    e = ethertype.lower()
-    if e == 'ipv4':
-        return 0x0800
-    elif e == 'ipv6':
-        return 0x86DD
-    elif e == 'arp':
-        return 0x0806
-    else:
-        raise ValueError(_("Unsupported ethertype: %s") % ethertype)
-
-
-def _subnet_str(cidr):
-    """Convert the cidr string to x.x.x.x_y format
-
-    :param cidr: CIDR in x.x.x.x/y format
-    """
-    return cidr.replace("/", "_")
 
 
 def handle_api_error(fn):
@@ -158,7 +115,7 @@ class MidoClient:
         LOG.debug(_("MidoClient.create_dhcp called: bridge=%(bridge)s, "
                     "cidr=%(cidr)s, gateway_ip=%(gateway_ip)s"),
                   {'bridge': bridge, 'cidr': cidr, 'gateway_ip': gateway_ip})
-        net_addr, net_len = _net_addr(cidr)
+        net_addr, net_len = net_util.net_addr(cidr)
         return bridge.add_dhcp_subnet().default_gateway(
             gateway_ip).subnet_prefix(net_addr).subnet_length(
                 net_len).create()
@@ -175,7 +132,7 @@ class MidoClient:
         LOG.debug(_("MidoClient.add_dhcp_host called: bridge=%(bridge)s, "
                     "cidr=%(cidr)s, ip=%(ip)s, mac=%(mac)s"),
                   {'bridge': bridge, 'cidr': cidr, 'ip': ip, 'mac': mac})
-        subnet = bridge.get_dhcp_subnet(_subnet_str(cidr))
+        subnet = bridge.get_dhcp_subnet(net_util.subnet_str(cidr))
         if subnet is None:
             raise MidonetApiException(msg=_("Tried to add to"
                                             "non-existent DHCP"))
@@ -194,7 +151,7 @@ class MidoClient:
         LOG.debug(_("MidoClient.remove_dhcp_host called: bridge=%(bridge)s, "
                     "cidr=%(cidr)s, ip=%(ip)s, mac=%(mac)s"),
                   {'bridge': bridge, 'cidr': cidr, 'ip': ip, 'mac': mac})
-        subnet = bridge.get_dhcp_subnet(_subnet_str(cidr))
+        subnet = bridge.get_dhcp_subnet(net_util.subnet_str(cidr))
         if subnet is None:
             LOG.warn(_("Tried to delete mapping from non-existent subnet"))
             return
@@ -220,7 +177,7 @@ class MidoClient:
                                      'cidr': cidr,
                                      'ip': ip, 'mac': mac})
         bridge = self.get_bridge(bridge_id)
-        self.remove_dhcp_host(bridge, _subnet_str(cidr), ip, mac)
+        self.remove_dhcp_host(bridge, net_util.subnet_str(cidr), ip, mac)
 
     @handle_api_error
     def delete_dhcp(self, bridge):
@@ -338,94 +295,51 @@ class MidoClient:
                     "dst_ip=%(dst_ip)s"),
                   {"bridge": bridge, "cidr": cidr, "gw_ip": gw_ip,
                    "dst_ip": dst_ip})
-        subnet = bridge.get_dhcp_subnet(_subnet_str(cidr))
+        subnet = bridge.get_dhcp_subnet(net_util.subnet_str(cidr))
         if subnet is None:
-            raise MidonetApiException(msg="Tried to access non-existent DHCP")
+            raise MidonetApiException(
+                msg=_("Tried to access non-existent DHCP"))
         prefix, length = dst_ip.split("/")
         routes = [{'destinationPrefix': prefix, 'destinationLength': length,
                    'gatewayAddr': gw_ip}]
         subnet.opt121_routes(routes).update()
 
     @handle_api_error
-    def link_bridge_to_router(self, port_id, router_id, gateway_ip, cidr,
-                              dhcp_ports):
-        """Link a bridge to the router
-
-        :param port_id: port ID
-        :param router_id: router id to link to
-        :param gateway_ip: IP address of gateway
-        :param cidr: network CIDR
-        """
-        LOG.debug(_("MidoClient.link_bridge_to_router called: "
-                    "port_id=%(port_id)s, router_id=%(router_id)s, "
-                    "gateway_ip=%(gateway_ip)s cidr=%(cidr)s"),
-                  {'port_id': port_id, 'router_id': router_id,
-                   'gateway_ip': gateway_ip, 'cidr': cidr})
-
-        router = self.get_router(router_id)
-        net_addr, net_len = _net_addr(cidr)
-
-        # create a port on the router
-        in_port = router.add_port()
-        router_port = in_port.port_address(gateway_ip).network_address(
-            net_addr).network_length(net_len).create()
-
-        br_port = self.get_port(port_id)
-        router_port.link(br_port.get_id())
-
-        # add a route for the subnet in the router
-        router.add_route().type('Normal').src_network_addr(
-            '0.0.0.0').src_network_length(0).dst_network_addr(
-                net_addr).dst_network_length(net_len).weight(
-                    100).next_hop_port(router_port.get_id()).create()
-
-        # Add a route for the metadata server. Not all VM images
-        # supports DHCP option 121
-        # Add a route for the Metadata server in the router to forward
-        # the packets to the bridge that will send them to the
-        # Metadata Proxy. Since we don't support multiple subnets
-        # it's ok to take the first fixed_ip
-
-        #check that the port exists
-        if dhcp_ports and dhcp_ports[0].fixed_ips:
-            router.add_route().type('Normal').src_network_addr(
-                net_addr).src_network_length(net_len).dst_network_addr(
-                    METADATA_DEFAULT_IP).dst_network_length(
-                        32).next_hop_port(
-                            router_port.get_id()).next_hop_gateway(
-                                dhcp_ports[0].fixed_ips[0].
-                                ip_address).create()
-        else:
-            LOG.debug("DHCP agent is not working correctly. No port to " +
-                      "reach the Metadata server on this network")
+    def add_router_port(self, router, port_address=None,
+                        network_address=None, network_length=None):
+        """Add a new port to an existing router."""
+        return self.mido_api.add_router_port(router,
+                                             port_address=port_address,
+                                             network_address=network_address,
+                                             network_length=network_length)
 
     @handle_api_error
-    def unlink_bridge_from_router(self, router, port_id):
-        """Unlink a bridge port from the router.
+    def link(self, port, peer_id):
+        """Link a port to a given peerId."""
+        self.mido_api.link(port, peer_id)
 
-        :param port_id: port ID
+    @handle_api_error
+    def delete_port_routes(self, routes, port_id):
+        """Remove routes whose next hop port is the given port ID."""
+        for route in routes:
+            if route.get_next_hop_port() == port_id:
+                self.mido_api.delete_route(route.get_id())
+
+    @handle_api_error
+    def get_router_routes(self, router_id):
+        """Get all routes for the given router."""
+        return self.mido_api.get_router_routes(router_id)
+
+    @handle_api_error
+    def unlink(self, port):
+        """Unlink a port
+
+        :param port: port object
         """
-        LOG.debug(_("MidoClient.unlink_bridge_from_router called: "
-                    "port_id=%(port_id)s"), {'port_id': port_id})
-        port = self.get_port(port_id)
-        if port is None:
-            raise MidonetResourceNotFound(resource_type='Port', id=port_id)
-
-        # Delete the route for the subnet and for the MD server.
-        # They will both have the same next hop port
-        n_deleted_routes = 0
-        for r in router.get_routes():
-            if r.get_next_hop_port() == port.get_peer_id():
-                r.delete()
-                n_deleted_routes += 1
-                #break # commented out due to issue#314
-        # there may be other routes using the same next hot port
-        assert n_deleted_routes >= 2
-
+        LOG.debug(_("MidoClient.unlink called: port=%(port)s"),
+                  {'port': port})
         if port.get_peer_id():
-            peer_id = port.get_peer_id()
-            port.unlink()
-            self.delete_port(peer_id)
+            self.mido_api.unlink(port)
         else:
             LOG.warn(_("Attempted to unlink a port that was not linked. %s"),
                      port.get_id())
@@ -445,7 +359,7 @@ class MidoClient:
                   {'bridge': bridge, 'gw_router': gw_router,
                    'gw_ip': gw_ip, 'cidr': cidr})
 
-        net_addr, net_len = _net_addr(cidr)
+        net_addr, net_len = net_util.net_addr(cidr)
 
         # create a port on the gateway router
         gw_port = gw_router.add_port()
@@ -457,10 +371,13 @@ class MidoClient:
         gw_port.link(port.get_id())
 
         # add a route for the subnet in the gateway router
-        gw_router.add_route().type('Normal').src_network_addr(
-            '0.0.0.0').src_network_length(0).dst_network_addr(
-                net_addr).dst_network_length(net_len).weight(
-                    100).next_hop_port(gw_port.get_id()).create()
+        self.mido_api.add_router_route(gw_router, type='Normal',
+                                       src_network_addr='0.0.0.0',
+                                       src_network_length=0,
+                                       dst_network_addr=net_addr,
+                                       dst_network_length=net_len,
+                                       next_hop_port=gw_port.get_id(),
+                                       weight=100)
 
     @handle_api_error
     def unlink_bridge_from_gw_router(self, bridge, gw_router):
@@ -521,17 +438,22 @@ class MidoClient:
         gw_port.link(port.get_id())
 
         # Add a route for gw_ip to bring it down to the router
-        gw_router.add_route().type(
-            'Normal').src_network_addr('0.0.0.0').src_network_length(
-                0).dst_network_addr(gw_ip).dst_network_length(
-                    32).weight(100).next_hop_port(
-                        gw_port.get_id()).create()
+        self.mido_api.add_router_route(gw_router, type='Normal',
+                                       src_network_addr='0.0.0.0',
+                                       src_network_length=0,
+                                       dst_network_addr=gw_ip,
+                                       dst_network_length=32,
+                                       next_hop_port=gw_port.get_id(),
+                                       weight=100)
 
         # Add default route to uplink in the router
-        router.add_route().type('Normal').src_network_addr(
-            '0.0.0.0').src_network_length(0).dst_network_addr(
-                '0.0.0.0').dst_network_length(0).weight(
-                    100).next_hop_port(port.get_id()).create()
+        self.mido_api.add_router_route(gw_router, type='Normal',
+                                       src_network_addr='0.0.0.0',
+                                       src_network_length=0,
+                                       dst_network_addr='0.0.0.0',
+                                       dst_network_length=0,
+                                       next_hop_port=port.get_id(),
+                                       weight=100)
 
     @handle_api_error
     def remove_router_gateway(self, id):
@@ -650,17 +572,19 @@ class MidoClient:
         return link_port
 
     @handle_api_error
-    def add_static_route(self, router, next_hop_port_id, ip):
-        """Setup a route on the router to for the IP to the given port."""
-        LOG.debug(_("MidoClient.add_static_route called: "
-                    "router=%(router)s, next_hop_port_id=%(next_hop_port_id)s"
-                    "ip=%(ip)s"),
-                  {'router': router, 'next_hop_port_id': next_hop_port_id,
-                   'ip': ip})
-        return router.add_route().type(
-            'Normal').src_network_addr('0.0.0.0').src_network_length(
-                0).dst_network_addr(ip).dst_network_length(32).weight(
-                    100).next_hop_port(next_hop_port_id).create()
+    def add_router_route(self, router, type='Normal',
+                         src_network_addr=None, src_network_length=None,
+                         dst_network_addr=None, dst_network_length=None,
+                         next_hop_port=None, next_hop_gateway=None,
+                         weight=100):
+        """Setup a route on the router."""
+        return self.mido_api.add_router_route(
+            router, type=type, src_network_addr=src_network_addr,
+            src_network_length=src_network_length,
+            dst_network_addr=dst_network_addr,
+            dst_network_length=dst_network_length,
+            next_hop_port=next_hop_port, next_hop_gateway=next_hop_gateway,
+            weight=weight)
 
     @handle_api_error
     def add_static_nat(self, tenant_id, chain_name, from_ip, to_ip, port_id,
@@ -683,7 +607,7 @@ class MidoClient:
                    'from_ip': from_ip, 'to_ip': to_ip,
                    'portid': port_id, 'nat_type': nat_type})
         if nat_type not in ['dnat', 'snat']:
-            raise ValueError("Invalid NAT type passed in %s" % nat_type)
+            raise ValueError(_("Invalid NAT type passed in %s") % nat_type)
 
         chain = self.get_chain_by_name(tenant_id, chain_name)
         nat_targets = []
@@ -849,54 +773,6 @@ class MidoClient:
             pg.delete()
 
     @handle_api_error
-    def add_chain_rule(self, chain, src_pg_id=None, dst_pg_id=None,
-                       src_addr=None, src_port_from=None, src_port_to=None,
-                       inv_src_addr=False,
-                       dst_addr=None, dst_port_from=None, dst_port_to=None,
-                       inv_dst_addr=False,
-                       src_mac=None, dst_mac=None,
-                       inv_src_mac=False, inv_dst_mac=False,
-                       jump_chain_id=False, jump_chain_name=False,
-                       protocol=None, ethertype=None, inv_ethertype=False,
-                       match_forward=False, match_return=False,
-                       action='accept', position=None, **kwargs):
+    def add_chain_rule(self, chain, action='accept', **kwargs):
         """Create a new accept chain rule."""
-        eth = None
-        if ethertype:
-            eth = _get_ethertype_value(ethertype)
-
-        proto = None
-        if protocol:
-            proto = _get_protocol_value(protocol)
-
-        src_nw_addr = src_nw_len = None
-        if src_addr:
-            src_nw_addr, src_nw_len = _net_addr(src_addr)
-
-        dst_nw_addr = dst_nw_len = None
-        if dst_addr:
-            dst_nw_addr, dst_nw_len = _net_addr(dst_addr)
-
-        src_tp = {"start": src_port_from, "end": src_port_to}
-        dst_tp = {"start": dst_port_from, "end": dst_port_to}
-        if proto == 1:  # ICMP
-            # Overwrite port fields regardless of the direction
-            src_tp = {"start": src_port_from, "end": src_port_from}
-            dst_tp = {"start": dst_port_to, "end": dst_port_to}
-
-        rule = chain.add_rule().type(action).nw_proto(proto)
-        rule = rule.position(position).match_forward_flow(
-            match_forward).properties(kwargs)
-        rule = rule.dl_type(eth).inv_dl_type(inv_ethertype)
-        rule = rule.tp_dst(dst_tp).tp_src(src_tp)
-        rule = rule.nw_dst_address(dst_nw_addr).nw_dst_length(
-            dst_nw_len).port_group_dst(dst_pg_id)
-        rule = rule.inv_nw_dst(inv_dst_addr).inv_nw_src(inv_src_addr)
-        rule = rule.nw_src_address(src_nw_addr).nw_src_length(
-            src_nw_len).port_group_src(src_pg_id)
-        rule = rule.dl_src(src_mac).dl_dst(dst_mac)
-        rule = rule.inv_dl_src(inv_src_mac).inv_dl_dst(inv_dst_mac)
-        rule = rule.jump_chain_id(jump_chain_id).jump_chain_name(
-            jump_chain_name)
-
-        return rule.create()
+        self.mido_api.add_chain_rule(chain, action, kwargs)

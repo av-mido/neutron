@@ -27,7 +27,7 @@ from neutron.agent.linux import dhcp
 from neutron.agent.linux import interface
 from neutron.agent.linux import ip_lib
 from neutron.openstack.common import log as logging
-from neutron.plugins.midonet import config  # noqa
+from neutron.plugins.midonet.common import config  # noqa
 
 LOG = logging.getLogger(__name__)
 
@@ -59,15 +59,6 @@ class DhcpNoOpDriver(dhcp.DhcpLocalProcess):
 
     def spawn_process(self):
         pass
-
-
-midonet_interface_driver_opts = [
-    cfg.StrOpt('midonet_host_uuid_path',
-               default='/etc/midolman/host_uuid.properties',
-               help=_('path to midonet host uuid file')),
-]
-
-cfg.CONF.register_opts(midonet_interface_driver_opts)
 
 
 class MidonetInterfaceDriver(interface.LinuxInterfaceDriver):
@@ -129,8 +120,8 @@ class MidonetInterfaceDriver(interface.LinuxInterfaceDriver):
                           host_uuid)
                 raise e
             try:
-                host.add_host_interface_port().port_id(vport_id) \
-                    .interface_name(host_dev_name).create()
+                self.mido_api.host.add_host_interface_port(
+                    host, vport_id, host_dev_name)
             except w_exc.HTTPError as e:
                 LOG.warn(_('Faild binding vport=%(vport) to device=%(device)'),
                          {"vport": vport_id, "device": host_dev_name})

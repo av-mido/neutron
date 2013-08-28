@@ -40,7 +40,10 @@ midonet_opts = [
                help=_('Virtual metadata router ID.')),
     cfg.StrOpt('mode',
                default='dev',
-               help=_('Operational mode. Internal dev use only.'))
+               help=_('Operational mode. Internal dev use only.')),
+    cfg.StrOpt('midonet_host_uuid_path',
+               default='/etc/midolman/host_uuid.properties',
+               help=_('path to midonet host uuid file'))
 ]
 
 
