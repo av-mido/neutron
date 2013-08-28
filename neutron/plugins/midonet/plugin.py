@@ -39,6 +39,7 @@ from neutron.extensions import securitygroup as ext_sg
 from neutron.openstack.common import excutils
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import rpc
+from neutron.plugins.midonet.common import net_util
 from neutron.plugins.midonet import config  # noqa
 from neutron.plugins.midonet import midonet_lib
 
@@ -238,23 +239,22 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         position = 1
         # mac spoofing protection
-        self.client.add_chain_rule(in_chain, src_mac=port["mac_address"],
-                                   inv_src_mac=True, action='drop',
-                                   position=position)
+        self._add_chain_rule(in_chain, action='drop',
+                             dl_src=port["mac_address"], inv_dl_src=True,
+                             position=position)
 
         # ip spoofing protection
         for fixed_ip in port["fixed_ips"]:
             position += 1
-            self.client.add_chain_rule(in_chain,
-                                       src_addr=fixed_ip["ip_address"] + "/32",
-                                       inv_src_addr=True,
-                                       ethertype="ipv4", action="drop",
-                                       position=position)
+            self._add_chain_rule(in_chain, action="drop",
+                                 src_addr=fixed_ip["ip_address"] + "/32",
+                                 inv_src_addr=True, dl_type=0x0800,  # IPv4
+                                 position=position)
 
         # conntrack
         position += 1
-        self.client.add_chain_rule(in_chain, match_forward=True,
-                                   position=position, action='accept')
+        self._add_chain_rule(in_chain, action='accept', match_forward=True,
+                             position=position)
 
         # Reset the position to process egress
         position = 1
@@ -264,20 +264,21 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             for sg_id in sg_ids:
                 chain_name = _sg_chain_names(sg_id)["ingress"]
                 chain = self.client.get_chain_by_name(tenant_id, chain_name)
-                self.client.add_chain_rule(out_chain,
-                                           jump_chain_id=chain.get_id(),
-                                           jump_chain_name=chain_name,
-                                           action='jump', position=position)
+                self._add_chain_rule(out_chain, action='jump',
+                                     jump_chain_id=chain.get_id(),
+                                     jump_chain_name=chain_name,
+                                     position=position)
                 position += 1
 
         # add reverse flow matching at the end
-        self.client.add_chain_rule(out_chain, match_return=True,
-                                   position=position)
+        self._add_chain_rule(out_chain, action='accept', match_return=True,
+                             position=position)
         position += 1
 
         # fall back DROP rule at the end except for ARP
-        self.client.add_chain_rule(out_chain, ethertype='arp',
-                                   inv_ethertype=True, position=position)
+        self._add_chain_rule(out_chain,
+                             ethertype=0x0806,  # ARP
+                             inv_ethertype=True, position=position)
 
     def _bind_port_to_sgs(self, context, port, sg_ids):
         self._process_port_create_security_group(context, port, sg_ids)
@@ -324,13 +325,15 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             src_port_to = sg_rule["port_range_max"]
 
         return self.client.add_chain_rule(
-            chain, src_pg_id=src_pg_id, dst_pg_id=dst_pg_id,
+            chain, action='accept', port_group_src=src_pg_id,
+            port_group_dst=dst_pg_id,
             src_addr=src_addr, src_port_from=src_port_from,
             src_port_to=src_port_to,
             dst_addr=dst_addr, dst_port_from=dst_port_from,
-            dst_port_to=dst_port_to, protocol=sg_rule["protocol"],
-            ethertype=sg_rule["ethertype"], action='accept',
-            **props)
+            dst_port_to=dst_port_to,
+            nw_proto=net_util.get_protocol_value(sg_rule["protocol"]),
+            dl_type=net_util.get_ethertype_value(sg_rule["ethertype"]),
+            properties=props)
 
     def setup_rpc(self):
         # RPC support
@@ -755,10 +758,31 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 device_owner='network:dhcp').all()
 
             # Link the router and the bridge
-            self.client.link_bridge_to_router(info["port_id"], router_id,
-                                              subnet["gateway_ip"],
-                                              subnet["cidr"],
-                                              dhcp_ports)
+            router = self.client.get_router(router_id)
+            cidr = subnet["cidr"]
+            router_port = self.client.link_bridge_to_router(
+                info["port_id"], router, subnet["gateway_ip"], cidr)
+
+            # Add a route for the metadata server. Not all VM images
+            # supports DHCP option 121
+            # Add a route for the Metadata server in the router to forward
+            # the packets to the bridge that will send them to the
+            # Metadata Proxy. Since we don't support multiple subnets
+            # it's ok to take the first fixed_ip
+            if dhcp_ports and dhcp_ports[0].fixed_ips:
+                net_addr, net_len = net_util.net_addr(cidr)
+                gw_ip = dhcp_ports[0].fixed_ips[0].ip_address
+                self.client.add_router_route(
+                    router, type='Normal', src_network_addr=net_addr,
+                    src_network_length=net_len,
+                    dst_network_addr=METADATA_DEFAULT_IP,
+                    dst_network_length=32,
+                    next_hop_port=router_port.get_id(),
+                    next_hop_gateway=gw_ip)
+            else:
+                LOG.warn(_("DHCP agent is not working correctly. No port to "
+                           "reach the Metadata server on this network"))
+
         except Exception:
             LOG.error(_("Failed to create MidoNet resources to add router "
                         "interface. info=%(info)s, router_id=%(router_id)s"),
@@ -816,9 +840,13 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                 router = self.client.get_router(fip["router_id"])
                 link_port = self.client.get_link_port(self.provider_router,
                                                       router.get_id())
-                self.client.add_static_route(self.provider_router,
-                                             link_port.get_peer_id(),
-                                             fip["floating_ip_address"])
+                self.client.add_router_route(
+                    self.provider_router,
+                    src_network_addr='0.0.0.0',
+                    src_network_length=0,
+                    dst_network_addr=fip["floating_ip_address"],
+                    dst_network_length=32,
+                    next_hop_port=link_port.get_peer_id())
 
                 # Add static SNAT and DNAT rules on the tenant router.
                 props = {OS_FLOATING_IP_RULE_KEY: id}
@@ -973,3 +1001,45 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                                                  str(rule["id"]))
             super(MidonetPluginV2, self).delete_security_group_rule(
                 context, sg_rule_id)
+
+    def _add_chain_rule(self, chain, action, **kwargs):
+
+        nw_proto = kwargs.get("nw_proto")
+        src_addr = kwargs.get("src_addr")
+        dst_addr = kwargs.get("dst_addr")
+        src_port_from = kwargs.get("src_port_from")
+        src_port_to = kwargs.get("src_port_to")
+        dst_port_from = kwargs.get("dst_port_from")
+        dst_port_to = kwargs.get("dst_port_to")
+
+        # Convert to the keys and values that midonet client understands
+        if src_addr:
+            kwargs["nw_src_addr"], kwargs["nw_src_length"] = net_util.net_addr(
+                src_addr)
+            del kwargs["src_addr"]
+
+        if dst_addr:
+            kwargs["nw_dst_addr"], kwargs["nw_dst_length"] = net_util.net_addr(
+                dst_addr)
+            del kwargs["dst_addr"]
+
+        kwargs["tp_src"] = {"start": src_port_from, "end": src_port_to}
+        if src_port_from:
+            del kwargs["src_port_from"]
+
+        if src_port_to:
+            del kwargs["src_port_to"]
+
+        kwargs["tp_dst"] = {"start": dst_port_from, "end": dst_port_to}
+        if dst_port_from:
+            del kwargs["dst_port_from"]
+
+        if dst_port_to:
+            del kwargs["dst_port_to"]
+
+        if nw_proto == 1:  # ICMP
+            # Overwrite port fields regardless of the direction
+            kwargs["tp_src"] = {"start": src_port_from, "end": src_port_from}
+            kwargs["tp_dst"] = {"start": dst_port_to, "end": dst_port_to}
+
+        return self.client.add_chain_rule(chain, action=action, **kwargs)
