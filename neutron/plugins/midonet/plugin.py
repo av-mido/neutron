@@ -278,7 +278,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         position += 1
 
         # fall back DROP rule at the end except for ARP
-        self._add_chain_rule(out_chain,
+        self._add_chain_rule(out_chain, action='drop',
                              ethertype=0x0806,  # ARP
                              inv_ethertype=True, position=position)
 

@@ -26,11 +26,15 @@ def subnet_str(cidr):
 
     :param cidr: CIDR in x.x.x.x/y format
     """
+    if cidr is None:
+        return None
     return cidr.replace("/", "_")
 
 
 def net_addr(addr):
     """Get network address prefix and length from a given address."""
+    if addr is None:
+        return (None, None)
     nw_addr, nw_len = addr.split('/')
     nw_len = int(nw_len)
     return nw_addr, nw_len
@@ -38,6 +42,8 @@ def net_addr(addr):
 
 def get_ethertype_value(ethertype):
     """Connvert string representation of ethertype to the numerical."""
+    if ethertype is None:
+        return None
     e = ethertype.lower()
     if e == 'ipv4':
         return 0x0800
@@ -46,11 +52,13 @@ def get_ethertype_value(ethertype):
     elif e == 'arp':
         return 0x0806
     else:
-        raise ValueError(_("Unsupported ethertype: %s") % ethertype)
+        return None 
 
 
 def get_protocol_value(protocol):
     """Convert string representation of protocol to the numerical."""
+    if protocol is None:
+        return None
     p = protocol.lower()
     if p == 'tcp':
         return constants.TCP_PROTOCOL
@@ -59,4 +67,4 @@ def get_protocol_value(protocol):
     elif p == 'icmp':
         return constants.ICMP_PROTOCOL
     else:
-        raise ValueError(_("Unsupported protocol: %s") % protocol)
+        return None 
