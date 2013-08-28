@@ -22,8 +22,6 @@
 
 from midonetclient import api
 from oslo.config import cfg
-import time
-from socket import error as socket_error
 
 from neutron.common import constants
 from neutron.common import exceptions as q_exc
@@ -44,9 +42,7 @@ from neutron.openstack.common import rpc
 from neutron.plugins.midonet import config  # noqa
 from neutron.plugins.midonet import midonet_lib
 
-
 LOG = logging.getLogger(__name__)
-
 
 METADATA_DEFAULT_IP = "169.254.169.254/32"
 OS_FLOATING_IP_RULE_KEY = 'OS_FLOATING_IP'
