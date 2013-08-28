@@ -22,6 +22,8 @@
 
 from midonetclient import api
 from oslo.config import cfg
+import time
+from socket import error as socket_error
 
 from neutron.common import constants
 from neutron.common import exceptions as q_exc
@@ -41,6 +43,7 @@ from neutron.openstack.common import log as logging
 from neutron.openstack.common import rpc
 from neutron.plugins.midonet import config  # noqa
 from neutron.plugins.midonet import midonet_lib
+
 
 LOG = logging.getLogger(__name__)
 
@@ -207,7 +210,18 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         self.client = midonet_lib.MidoClient(self.mido_api)
 
         if provider_router_id:
-            self.provider_router = self.client.get_router(provider_router_id)
+            try:
+                self.provider_router = self.client.get_router(provider_router_id)
+            except socket_error as serr:
+                if serr[1] == "ECONNREFUSED":
+                    LOG.debug(_('Failed to connect to mido-api, '
+                                'retrying.'))
+                    self._new_reconnect_attempt(provider_router_id)
+                else:
+                    Log.debug(_('Failed to fetch provider router ' 
+                                'but it was not an ECONNREFUSED exception.'))
+                    raise MidonetPluginException(msg=msg)
+
         else:
             msg = _('provider_router_id should be configured in the plugin '
                     'config file')
@@ -216,6 +230,25 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         self.setup_rpc()
         db.configure_db()
+
+    """ Keep attempting to reconnect to the midonet-api, 
+        with a simple get_router operation.
+        Uses exponential backoff with a max sleep time of 60 seconds.
+    """
+    def _new_reconnect_attempt(self, provider_router_id):
+        attempt = 0
+        delay = 1
+        while True:
+            try:
+                self.provider_router = self.client.get_router(provider_router_id)
+                LOG.info("Successfully connected to mido-api.")
+                break
+            except socket_error as serr:
+                import pdb
+                pdb.set_trace()
+                LOG.debug("Going to sleep and retrying in %s seconds", delay)
+                time.sleep(delay)
+                delay = min(2 * delay, 2) #TODO av-mido: update to 60
 
     def _dhcp_mappings(self, context, fixed_ips, mac):
         for fixed_ip in fixed_ips:
