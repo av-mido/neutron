@@ -317,7 +317,6 @@ class MidoClient:
         """Link a port to a given peerId."""
         self.mido_api.link(port, peer_id)
 
-
     @handle_api_error
     def delete_port_routes(self, routes, port_id):
         """Remove routes whose next hop port is the given port ID."""
