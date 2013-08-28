@@ -27,7 +27,7 @@ from neutron.agent.linux import dhcp
 from neutron.agent.linux import interface
 from neutron.agent.linux import ip_lib
 from neutron.openstack.common import log as logging
-from neutron.plugins.midonet import config  # noqa
+from neutron.plugins.midonet.common import config  # noqa
 
 LOG = logging.getLogger(__name__)
 
