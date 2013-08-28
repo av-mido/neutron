@@ -193,23 +193,21 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
     __native_bulk_support = False
 
     def __init__(self):
-
         # Read config values
         midonet_conf = cfg.CONF.MIDONET
         midonet_uri = midonet_conf.midonet_uri
         admin_user = midonet_conf.username
         admin_pass = midonet_conf.password
         admin_project_id = midonet_conf.project_id
-        provider_router_id = midonet_conf.provider_router_id
+        self.provider_router_id = midonet_conf.provider_router_id
 
         self.mido_api = api.MidonetApi(midonet_uri, admin_user,
                                        admin_pass,
                                        project_id=admin_project_id)
         self.client = midonet_lib.MidoClient(self.mido_api)
 
-        if provider_router_id:
-            self.provider_router = self.client.get_router(provider_router_id)
-        else:
+        # self.provider_router_id should have been set.
+        if not hasattr(self, 'provider_router_id'):
             msg = _('provider_router_id should be configured in the plugin '
                     'config file')
             LOG.exception(msg)
@@ -217,6 +215,10 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         self.setup_rpc()
         db.configure_db()
+
+    def _get_provider_router(self):
+        if not hasattr(self, 'provider_router'):
+            self.provider_router = self.client.get_router(self.provider_router_id)
 
     def _dhcp_mappings(self, context, fixed_ips, mac):
         for fixed_ip in fixed_ips:
@@ -370,7 +372,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
             # For external network, link the bridge to the provider router.
             if net['router:external']:
                 self.client.link_bridge_to_gw_router(
-                    bridge, self.provider_router, gateway_ip, cidr)
+                    bridge, self._get_provider_router(), gateway_ip, cidr)
 
         LOG.debug(_("MidonetPluginV2.create_subnet exiting: sn_entry=%r"),
                   sn_entry)
@@ -393,7 +395,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         # If the network is external, clean up routes, links, ports.
         if net['router:external']:
             self.client.unlink_bridge_from_gw_router(
-                bridge, self.provider_router)
+                bridge, self._get_provider_router())
 
         super(MidonetPluginV2, self).delete_subnet(context, id)
         LOG.debug(_("MidonetPluginV2.delete_subnet exiting"))
@@ -693,7 +695,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
                     # First link routers and set up the routes
                     self.client.set_router_gateway(r["id"],
-                                                   self.provider_router,
+                                                   self._get_provider_router(),
                                                    gw_ip)
 
                     # Get the NAT chains and add dynamic SNAT rules.
@@ -838,10 +840,10 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
                 # Add a route for the floating IP on the provider router.
                 router = self.client.get_router(fip["router_id"])
-                link_port = self.client.get_link_port(self.provider_router,
+                link_port = self.client.get_link_port(self._get_provider_router(),
                                                       router.get_id())
                 self.client.add_router_route(
-                    self.provider_router,
+                    self._get_provider_router(),
                     src_network_addr='0.0.0.0',
                     src_network_length=0,
                     dst_network_addr=fip["floating_ip_address"],
@@ -868,7 +870,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
                 fip = super(MidonetPluginV2, self).get_floatingip(context, id)
                 router = self.client.get_router(fip["router_id"])
-                self.client.remove_static_route(self.provider_router,
+                self.client.remove_static_route(self._get_provider_router(),
                                                 fip["floating_ip_address"])
 
                 chain_names = _nat_chain_names(router.get_id())
