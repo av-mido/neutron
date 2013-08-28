@@ -228,7 +228,16 @@ class MidoClient:
         """
         LOG.debug(_("MidoClient.add_bridge_port called: "
                     "bridge=%(bridge)s"), {'bridge': bridge})
-        return bridge.add_port().create()
+        return self.mido_api.add_bridge_port(bridge)
+
+    @handle_api_error
+    def add_router_port(self, router, port_address=None,
+                        network_address=None, network_length=None):
+        """Add a new port to an existing router."""
+        return self.mido_api.add_router_port(router,
+                                             port_address=port_address,
+                                             network_address=network_address,
+                                             network_length=network_length)
 
     @handle_api_error
     def create_router(self, tenant_id, name):
@@ -304,15 +313,6 @@ class MidoClient:
         subnet.opt121_routes(routes).update()
 
     @handle_api_error
-    def add_router_port(self, router, port_address=None,
-                        network_address=None, network_length=None):
-        """Add a new port to an existing router."""
-        return self.mido_api.add_router_port(router,
-                                             port_address=port_address,
-                                             network_address=network_address,
-                                             network_length=network_length)
-
-    @handle_api_error
     def link(self, port, peer_id):
         """Link a port to a given peerId."""
         self.mido_api.link(port, peer_id)
@@ -342,142 +342,6 @@ class MidoClient:
         else:
             LOG.warn(_("Attempted to unlink a port that was not linked. %s"),
                      port.get_id())
-
-    @handle_api_error
-    def link_bridge_to_gw_router(self, bridge, gw_router, gw_ip, cidr):
-        """Link a bridge to the gateway router
-
-        :param bridge:  bridge
-        :param gw_router: gateway router to link to
-        :param gw_ip: IP address of gateway
-        :param cidr: network CIDR
-        """
-        LOG.debug(_("MidoClient.link_bridge_to_gw_router called: "
-                    "bridge=%(bridge)s, gw_router=%(gw_router)s, "
-                    "gw_ip=%(gw_ip)s, cidr=%(cidr)s"),
-                  {'bridge': bridge, 'gw_router': gw_router,
-                   'gw_ip': gw_ip, 'cidr': cidr})
-
-        net_addr, net_len = net_util.net_addr(cidr)
-
-        # create a port on the gateway router
-        gw_port = gw_router.add_port()
-        gw_port = gw_port.port_address(gw_ip).network_address(
-            net_addr).network_length(net_len).create()
-
-        # create a bridge port, then link it to the router.
-        port = bridge.add_port().create()
-        gw_port.link(port.get_id())
-
-        # add a route for the subnet in the gateway router
-        self.mido_api.add_router_route(gw_router, type='Normal',
-                                       src_network_addr='0.0.0.0',
-                                       src_network_length=0,
-                                       dst_network_addr=net_addr,
-                                       dst_network_length=net_len,
-                                       next_hop_port=gw_port.get_id(),
-                                       weight=100)
-
-    @handle_api_error
-    def unlink_bridge_from_gw_router(self, bridge, gw_router):
-        """Unlink a bridge from the gateway router
-
-        :param bridge: bridge to unlink
-        :param gw_router: gateway router to unlink from
-        """
-        LOG.debug(_("MidoClient.unlink_bridge_from_gw_router called: "
-                    "bridge=%(bridge)s, gw_router=%(gw_router)s"),
-                  {'bridge': bridge, 'gw_router': gw_router})
-        # Delete routes and unlink the router and the bridge.
-        routes = gw_router.get_routes()
-
-        bridge_ports_to_delete = [
-            p for p in gw_router.get_peer_ports()
-            if p.get_device_id() == bridge.get_id()]
-
-        for p in bridge.get_peer_ports():
-            if p.get_device_id() == gw_router.get_id():
-                # delete the routes going to the bridge
-                for r in routes:
-                    if r.get_next_hop_port() == p.get_id():
-                        self.mido_api.delete_route(r.get_id())
-                p.unlink()
-                self.mido_api.delete_port(p.get_id())
-
-        # delete bridge port
-        for port in bridge_ports_to_delete:
-            self.mido_api.delete_port(port.get_id())
-
-    @handle_api_error
-    def set_router_gateway(self, id, gw_router, gw_ip):
-        """Set router uplink gateway
-
-        :param ID: ID of the router
-        :param gw_router: gateway router to link to
-        :param gw_ip: gateway IP address
-        """
-        LOG.debug(_("MidoClient.set_router_gateway called: id=%(id)s, "
-                    "gw_router=%(gw_router)s, gw_ip=%(gw_ip)s"),
-                  {'id': id, 'gw_router': gw_router, 'gw_ip': gw_ip}),
-
-        router = self.get_router(id)
-
-        # Create a port in the gw router
-        gw_port = gw_router.add_port()
-        gw_port = gw_port.network_address(
-            '169.254.255.0').network_length(30).port_address(
-                '169.254.255.1').create()
-
-        # Create a port in the router
-        port = router.add_port().network_address(
-            '169.254.255.0').network_length(30).port_address(
-                '169.254.255.2').create()
-
-        # Link them
-        gw_port.link(port.get_id())
-
-        # Add a route for gw_ip to bring it down to the router
-        self.mido_api.add_router_route(gw_router, type='Normal',
-                                       src_network_addr='0.0.0.0',
-                                       src_network_length=0,
-                                       dst_network_addr=gw_ip,
-                                       dst_network_length=32,
-                                       next_hop_port=gw_port.get_id(),
-                                       weight=100)
-
-        # Add default route to uplink in the router
-        self.mido_api.add_router_route(gw_router, type='Normal',
-                                       src_network_addr='0.0.0.0',
-                                       src_network_length=0,
-                                       dst_network_addr='0.0.0.0',
-                                       dst_network_length=0,
-                                       next_hop_port=port.get_id(),
-                                       weight=100)
-
-    @handle_api_error
-    def remove_router_gateway(self, id):
-        """Clear router gateway
-
-        :param ID: ID of the router
-        """
-        LOG.debug(_("MidoClient.remove_router_gateway called: "
-                    "id=%(id)s"), {'id': id})
-        router = self.get_router(id)
-
-        # delete the port that is connected to the gateway router
-        for p in router.get_ports():
-            if p.get_port_address() == '169.254.255.2':
-                peer_port_id = p.get_peer_id()
-                if peer_port_id is not None:
-                    p.unlink()
-                    self.mido_api.delete_port(peer_port_id)
-                self.mido_api.delete_port(p.get_id())
-
-        # delete default route
-        for r in router.get_routes():
-            if (r.get_dst_network_addr() == '0.0.0.0' and
-                    r.get_dst_network_length() == 0):
-                self.mido_api.delete_route(r.get_id())
 
     @handle_api_error
     def remove_rules_by_property(self, tenant_id, chain_name, key, value):

@@ -371,7 +371,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
             # For external network, link the bridge to the provider router.
             if net['router:external']:
-                self.client.link_bridge_to_gw_router(
+                self._link_bridge_to_gw_router(
                     bridge, self._get_provider_router(), gateway_ip, cidr)
 
         LOG.debug(_("MidonetPluginV2.create_subnet exiting: sn_entry=%r"),
@@ -394,8 +394,8 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
 
         # If the network is external, clean up routes, links, ports.
         if net['router:external']:
-            self.client.unlink_bridge_from_gw_router(
-                bridge, self._get_provider_router())
+            self._unlink_bridge_from_gw_router(bridge,
+                                               self._get_provider_router())
 
         super(MidonetPluginV2, self).delete_subnet(context, id)
         LOG.debug(_("MidonetPluginV2.delete_subnet exiting"))
@@ -671,6 +671,76 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                   {"router_data": router_data})
         return router_data
 
+    def _set_router_gateway(self, id, gw_router, gw_ip):
+        """Set router uplink gateway
+
+        :param ID: ID of the router
+        :param gw_router: gateway router to link to
+        :param gw_ip: gateway IP address
+        """
+        LOG.debug(_("MidonetPluginV2.set_router_gateway called: id=%(id)s, "
+                    "gw_router=%(gw_router)s, gw_ip=%(gw_ip)s"),
+                  {'id': id, 'gw_router': gw_router, 'gw_ip': gw_ip}),
+
+        router = self.client.get_router(id)
+
+        # Create a port in the gw router
+        gw_port = self.client.add_router_port(gw_router,
+                                              port_address='169.254.255.1',
+                                              network_address='169.254.255.0',
+                                              network_length=30)
+
+        # Create a port in the router
+        port = self.client.add_router_port(router,
+                                           port_address='169.254.255.2',
+                                           network_address='169.254.255.0',
+                                           network_length=30)
+
+        # Link them
+        self.client.link(gw_port, port.get_id())
+
+        # Add a route for gw_ip to bring it down to the router
+        self.client.add_router_route(gw_router, type='Normal',
+                                     src_network_addr='0.0.0.0',
+                                     src_network_length=0,
+                                     dst_network_addr=gw_ip,
+                                     dst_network_length=32,
+                                     next_hop_port=gw_port.get_id(),
+                                     weight=100)
+
+        # Add default route to uplink in the router
+        self.client.add_router_route(gw_router, type='Normal',
+                                     src_network_addr='0.0.0.0',
+                                     src_network_length=0,
+                                     dst_network_addr='0.0.0.0',
+                                     dst_network_length=0,
+                                     next_hop_port=port.get_id(),
+                                     weight=100)
+
+    def _remove_router_gateway(self, id):
+        """Clear router gateway
+
+        :param ID: ID of the router
+        """
+        LOG.debug(_("MidonetPluginV2.remove_router_gateway called: "
+                    "id=%(id)s"), {'id': id})
+        router = self.client.get_router(id)
+
+        # delete the port that is connected to the gateway router
+        for p in router.get_ports():
+            if p.get_port_address() == '169.254.255.2':
+                peer_port_id = p.get_peer_id()
+                if peer_port_id is not None:
+                    self.client.unlink(p)
+                    self.client.delete_port(peer_port_id)
+                self.client.delete_port(p.get_id())
+
+        # delete default route
+        for r in router.get_routes():
+            if (r.get_dst_network_addr() == '0.0.0.0' and
+                    r.get_dst_network_length() == 0):
+                self.client.delete_route(r.get_id())
+
     def update_router(self, context, id, router):
         """Handle router updates."""
         LOG.debug(_("MidonetPluginV2.update_router called: id=%(id)s "
@@ -694,9 +764,9 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                     gw_ip = gw_port['fixed_ips'][0]['ip_address']
 
                     # First link routers and set up the routes
-                    self.client.set_router_gateway(r["id"],
-                                                   self._get_provider_router(),
-                                                   gw_ip)
+                    self._set_router_gateway(r["id"],
+                                             self._get_provider_router(),
+                                             gw_ip)
 
                     # Get the NAT chains and add dynamic SNAT rules.
                     chain_names = _nat_chain_names(r["id"])
@@ -715,7 +785,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
                             SNAT_RULE)
 
                     # Remove the default routes and unlink
-                    self.client.remove_router_gateway(r["id"])
+                    self._remove_router_gateway(r["id"])
 
             # Update the name if changed
             changed_name = router_data.get('name')
@@ -740,6 +810,60 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         self.client.delete_router(id)
 
         super(MidonetPluginV2, self).delete_router(context, id)
+
+    def _link_bridge_to_gw_router(self, bridge, gw_router, gw_ip, cidr):
+        """Link a bridge to the gateway router
+
+        :param bridge:  bridge
+        :param gw_router: gateway router to link to
+        :param gw_ip: IP address of gateway
+        :param cidr: network CIDR
+        """
+        net_addr, net_len = net_util.net_addr(cidr)
+
+        # create a port on the gateway router
+        gw_port = self.client.add_router_port(gw_router, port_address=gw_ip,
+                                              network_address=net_addr,
+                                              network_length=net_len)
+
+        # create a bridge port, then link it to the router.
+        port = self.client.add_bridge_port(bridge)
+        self.client.link(gw_port, port.get_id())
+
+        # add a route for the subnet in the gateway router
+        self.client.add_router_route(gw_router, type='Normal',
+                                     src_network_addr='0.0.0.0',
+                                     src_network_length=0,
+                                     dst_network_addr=net_addr,
+                                     dst_network_length=net_len,
+                                     next_hop_port=gw_port.get_id(),
+                                     weight=100)
+
+    def _unlink_bridge_from_gw_router(self, bridge, gw_router):
+        """Unlink a bridge from the gateway router
+
+        :param bridge: bridge to unlink
+        :param gw_router: gateway router to unlink from
+        """
+        # Delete routes and unlink the router and the bridge.
+        routes = self.client.get_router_routes(gw_router.get_id())
+
+        bridge_ports_to_delete = [
+            p for p in gw_router.get_peer_ports()
+            if p.get_device_id() == bridge.get_id()]
+
+        for p in bridge.get_peer_ports():
+            if p.get_device_id() == gw_router.get_id():
+                # delete the routes going to the bridge
+                for r in routes:
+                    if r.get_next_hop_port() == p.get_id():
+                        self.client.delete_route(r.get_id())
+                self.client.unlink(p)
+                self.client.delete_port(p.get_id())
+
+        # delete bridge port
+        for port in bridge_ports_to_delete:
+            self.client.delete_port(port.get_id())
 
     def _link_bridge_to_router(self, router, bridge_port_id, net_addr, net_len,
                                gw_ip, metadata_gw_ip):
