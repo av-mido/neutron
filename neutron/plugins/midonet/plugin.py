@@ -197,6 +197,7 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         admin_pass = midonet_conf.password
         admin_project_id = midonet_conf.project_id
         self.provider_router_id = midonet_conf.provider_router_id
+        self.provider_router = None
 
         self.mido_api = api.MidonetApi(midonet_uri, admin_user,
                                        admin_pass,
@@ -214,9 +215,10 @@ class MidonetPluginV2(db_base_plugin_v2.NeutronDbPluginV2,
         db.configure_db()
 
     def _get_provider_router(self):
-        if not hasattr(self, 'provider_router'):
+        if self.provider_router is None:
             self.provider_router = self.client.get_router(
                 self.provider_router_id)
+        return self.provider_router
 
     def _dhcp_mappings(self, context, fixed_ips, mac):
         for fixed_ip in fixed_ips:

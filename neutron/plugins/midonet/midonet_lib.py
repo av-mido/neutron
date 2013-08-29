@@ -25,6 +25,7 @@ from webob import exc as w_exc
 from neutron.common import exceptions as n_exc
 from neutron.openstack.common import log as logging
 from neutron.plugins.midonet.common import net_util
+from midonetclient import midoapi_exceptions
 
 LOG = logging.getLogger(__name__)
 
@@ -34,7 +35,8 @@ def handle_api_error(fn):
     def wrapped(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except w_exc.HTTPException as ex:
+        except (w_exc.HTTPException,
+            midoapi_exceptions.MidoApiConnectionError) as ex:
             raise MidonetApiException(msg=ex)
     return wrapped
 
